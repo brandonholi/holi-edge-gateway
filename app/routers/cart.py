@@ -1,11 +1,16 @@
 import json
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
-from ..clients.redis_client import get_state_redis, get_cache_redis
-from ..schemas.cart import CartOut, CartLine, CartUpdateIn
+
+from fastapi import APIRouter, Header
+
+from ..clients.redis_client import get_cache_redis, get_state_redis
+from ..core.deps import SedeRequerida
+from ..schemas.cart import CarritoOut, LineaCarrito, LineaCarritoIn
 
 router = APIRouter(prefix="/v1/cart", tags=["Cart"])
+
+CARRITO_TTL_SECONDS = 604800
 
 
 async def _resolve_cart_id(state_redis, partner_id: Optional[str], device_id: Optional[str]) -> str:
@@ -21,84 +26,78 @@ async def _resolve_cart_id(state_redis, partner_id: Optional[str], device_id: Op
 
     new_id = str(uuid.uuid4())
     if partner_id:
-        await state_redis.set(f"cart:user:{partner_id}", new_id, ex=604800)
+        await state_redis.set(f"cart:user:{partner_id}", new_id, ex=CARRITO_TTL_SECONDS)
     elif device_id:
-        await state_redis.set(f"cart:device:{device_id}", new_id, ex=604800)
+        await state_redis.set(f"cart:device:{device_id}", new_id, ex=CARRITO_TTL_SECONDS)
     return new_id
 
 
-@router.get("", response_model=CartOut)
-async def get_cart(
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede"),
-    x_device_id: Optional[str] = Header(None, alias="X-Device-Id"),
-    authorization: Optional[str] = Header(None)
-):
-    """Retrieve active cart from Redis holi-estado."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
-
-    state_redis = get_state_redis()
-    sede = x_holi_sede.upper()
-    cart_id = await _resolve_cart_id(state_redis, None, x_device_id)
-
+async def _leer_carrito(state_redis, cart_id: str, sede: str) -> CarritoOut:
+    # Redis keeps the English line fields (qty, price_unit, name); ADR-012.
     raw_lines = await state_redis.hgetall(f"cart:{cart_id}:lines")
-    lines = []
-    total_amount = 0.0
+    lineas = []
+    total = 0.0
 
     for sku, line_json in raw_lines.items():
         try:
             data = json.loads(line_json)
-            qty = float(data.get("qty", 0.0))
-            price_unit = float(data.get("price_unit", 0.0))
-            total_amount += qty * price_unit
-            lines.append(CartLine(
+            cantidad = float(data.get("qty", 0.0))
+            precio_unitario = float(data.get("price_unit", 0.0))
+            total += cantidad * precio_unitario
+            lineas.append(LineaCarrito(
                 sku=sku,
-                qty=qty,
-                price_unit=price_unit,
-                name=data.get("name", sku)
+                nombre=data.get("name", sku),
+                cantidad=cantidad,
+                precio_unitario=precio_unitario,
             ))
         except Exception:
             continue
 
-    return CartOut(
-        cart_id=cart_id,
+    return CarritoOut(
+        carrito_id=cart_id,
         sede=sede,
-        lines=lines,
-        total_amount=round(total_amount, 2),
-        items_count=len(lines),
+        lineas=lineas,
+        total=round(total, 2),
+        cantidad_lineas=len(lineas),
     )
 
 
-@router.put("/lines", response_model=CartOut)
-async def update_cart_line(
-    item: CartUpdateIn,
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede"),
-    x_device_id: Optional[str] = Header(None, alias="X-Device-Id")
+@router.get("", response_model=CarritoOut)
+async def ver_carrito(
+    sede: SedeRequerida,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-Id"),
 ):
-    """Add, update or remove SKU quantity in cart."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
+    """Active cart from Redis holi-estado."""
+    state_redis = get_state_redis()
+    cart_id = await _resolve_cart_id(state_redis, None, x_device_id)
+    return await _leer_carrito(state_redis, cart_id, sede)
 
+
+@router.put("/lines", response_model=CarritoOut)
+async def actualizar_linea(
+    linea: LineaCarritoIn,
+    sede: SedeRequerida,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-Id"),
+):
+    """Sets the quantity of a SKU in the cart; 0 removes the line."""
     state_redis = get_state_redis()
     cache_redis = get_cache_redis()
-    sede = x_holi_sede.upper()
     cart_id = await _resolve_cart_id(state_redis, None, x_device_id)
 
     lines_key = f"cart:{cart_id}:lines"
 
-    if item.qty <= 0:
-        await state_redis.hdel(lines_key, item.sku)
+    if linea.cantidad <= 0:
+        await state_redis.hdel(lines_key, linea.sku)
     else:
-        # Fetch current price and name from cache_redis
         v_price = await cache_redis.get(f"v:price:{sede}") or "1"
-        price_data = await cache_redis.hgetall(f"price:{v_price}:{sede}:{item.sku}")
-        prod_data = await cache_redis.hgetall(f"prod:{item.sku}")
+        price_data = await cache_redis.hgetall(f"price:{v_price}:{sede}:{linea.sku}")
+        prod_data = await cache_redis.hgetall(f"prod:{linea.sku}")
 
         final_price = float(price_data.get("final_price", 0.0)) if price_data else 0.0
-        name = prod_data.get("name", item.sku) if prod_data else item.sku
+        name = prod_data.get("name", linea.sku) if prod_data else linea.sku
 
-        payload = json.dumps({"qty": item.qty, "price_unit": final_price, "name": name})
-        await state_redis.hset(lines_key, item.sku, payload)
-        await state_redis.expire(lines_key, 604800)
+        payload = json.dumps({"qty": linea.cantidad, "price_unit": final_price, "name": name})
+        await state_redis.hset(lines_key, linea.sku, payload)
+        await state_redis.expire(lines_key, CARRITO_TTL_SECONDS)
 
-    return await get_cart(x_holi_sede=x_holi_sede, x_device_id=x_device_id)
+    return await _leer_carrito(state_redis, cart_id, sede)

@@ -17,14 +17,15 @@ async def test_health_endpoint():
 
 @pytest.mark.asyncio
 async def test_catalog_missing_sede_header():
-    """Verify missing X-Holi-Sede returns RFC-7807 400 Problem."""
+    """A missing X-Holi-Sede is a malformed request: 422 parametros-invalidos."""
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         res = await client.get("/v1/catalog")
-        assert res.status_code == 400
+        assert res.status_code == 422
         assert res.headers.get("Content-Type") == "application/problem+json"
         data = res.json()
-        assert data["status"] == 400
+        assert data["status"] == 422
+        assert data["type"] == "https://api.holi.com.pe/errors/parametros-invalidos"
         assert "X-Holi-Sede" in data["detail"]
 
 

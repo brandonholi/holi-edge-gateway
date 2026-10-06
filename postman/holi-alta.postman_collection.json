@@ -1,0 +1,1048 @@
+{
+  "info": {
+    "_postman_id": "e1b06fe7-550f-4de0-8090-c6aa5d9dfd8b",
+    "name": "HOLI Edge · Alta de cuenta",
+    "description": "Ciclo de alta del contrato API v1: alta con código SMS, verificación del correo, sesión y recuperación.\n\nImporta también el entorno `holi-edge-local`. Los códigos (SMS y correo) se copian a mano en las variables `codigo_sms`, `codigo_correo` y `codigo_reset`, así que ejecuta las carpetas paso a paso, no con el Runner.\n\nTodas las respuestas pasan por las pruebas comunes de la colección: X-Request-Id presente y, en errores, formato application/problem+json con un `type` del catálogo.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"Devuelve X-Request-Id\", () => pm.response.to.have.header(\"X-Request-Id\"));",
+          "if (pm.response.code >= 400) {",
+          "  pm.test(\"Error en formato problem+json\", () => {",
+          "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+          "    const p = pm.response.json();",
+          "    pm.expect(p.type).to.match(/^https:\\/\\/api\\.holi\\.com\\.pe\\/errors\\/[a-z-]+$/);",
+          "    pm.expect(p).to.have.property(\"request_id\");",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Salud",
+      "item": [
+        {
+          "name": "Estado del Edge",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Antes de empezar: el Edge debe responder healthy (Redis de caché y de estado conectados)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Redis conectado\", () => { const b = pm.response.json(); pm.expect(b.redis_cache && b.redis_state, \"levanta Redis: docker start holi-redis\").to.be.true; });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Alta de cuenta",
+      "description": "Ejecuta en orden. Entre el paso 1.2 y el 1.3 llega un SMS: copia el código en la variable de entorno `codigo_sms` antes de enviar el 1.3.",
+      "item": [
+        {
+          "name": "1.1 Abrir el alta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "`tipo_documento_id` sale de GET /v1/document-types (en holi_ecommerce: 5 = DNI, 4 = RUC). Si es DNI lo valida con json.pe (gasta un crédito si no está en caché); otros tipos quedan pendientes y exigen `nombre` y `apellido`. Abre un borrador de 15 min. No escribe nada en Odoo; si el documento ya es cliente de tienda, la cuenta se vincula a ese contacto en el paso 1.4. Si la cuenta ya existe responde 409 cuenta-ya-existe.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_documento_id\": \"{{tipo_documento_id}}\",\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"nombre\": \"{{nombre}}\",\n  \"apellido\": \"{{apellido}}\",\n  \"fecha_nacimiento\": \"{{fecha_nacimiento}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code < 300) pm.environment.set(\"registro_id\", pm.response.json().registro_id);",
+                  "pm.test(\"Solo canales de teléfono (ADR-017)\", () => pm.expect(pm.response.json().canales_disponibles).to.not.include(\"correo\"));",
+                  "pm.test(\"Trae estado de validación del DNI\", () => pm.expect([\"validado\", \"pendiente\", \"rechazado\"]).to.include(pm.response.json().estado_validacion));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 Enviar código SMS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/send",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "send"
+              ]
+            },
+            "description": "Twilio envía el SMS al teléfono del borrador. Reenviar antes de 60 s responde 429 espera-para-reenviar (con Retry-After). Límite: 3 por hora y 10 por día por teléfono.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registro_id\": \"{{registro_id}}\",\n  \"canal\": \"sms\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Destino enmascarado\", () => pm.expect(pm.response.json().destino_enmascarado).to.match(/\\*+\\d{3}$/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.3 Verificar código SMS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
+            "description": "Antes de enviar: pon el código recibido en la variable `codigo_sms`. 5 intentos; al sexto se descarta el borrador y hay que volver al 1.1.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registro_id\": \"{{registro_id}}\",\n  \"codigo\": \"{{codigo_sms}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_verificacion\", pm.response.json().token_verificacion);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.4 Crear la cuenta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/register/complete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register",
+                "complete"
+              ]
+            },
+            "description": "Única escritura del alta en Odoo. El token de verificación es de un solo uso: repetir este paso responde 409 registro-ya-completado.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion}}\",\n  \"contrasena\": \"{{contrasena}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_acceso\", pm.response.json().token_acceso);",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_renovacion\", pm.response.json().token_renovacion);",
+                  "if (pm.response.code < 300) pm.environment.set(\"cliente_id\", pm.response.json().cliente_id);",
+                  "pm.test(\"Correo aún sin verificar\", () => pm.expect(pm.response.json().correo_verificado).to.eql(false));",
+                  "pm.test(\"requiere_codigo es false en v1\", () => pm.expect(pm.response.json().requiere_codigo).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Verificar correo (con sesión)",
+      "description": "Usa el `token_acceso` del alta o del login (dura 15 min; si vence, ejecuta 3.2). Entre 2.1 y 2.2 llega un correo: copia el código en `codigo_correo`.",
+      "item": [
+        {
+          "name": "2.1 Enviar código al correo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_acceso}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/email/otp/send",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "email",
+                "otp",
+                "send"
+              ]
+            },
+            "description": "Envía el código al correo registrado en Odoo, con la plantilla de verificación de SendGrid. Si ya está verificado responde 409 correo-ya-verificado."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Canal correo\", () => pm.expect(pm.response.json().canal).to.eql(\"correo\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 Confirmar código del correo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_acceso}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/email/otp/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "email",
+                "otp",
+                "verify"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"{{codigo_correo}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Correo verificado\", () => pm.expect(pm.response.json().correo_verificado).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Sesión",
+      "item": [
+        {
+          "name": "3.1 Iniciar sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "10 intentos cada 5 min por correo e IP. Tras 10 contraseñas fallidas Odoo bloquea la cuenta 15 min (423 cuenta-bloqueada).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo}}\",\n  \"contrasena\": \"{{contrasena}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_acceso\", pm.response.json().token_acceso);",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_renovacion\", pm.response.json().token_renovacion);",
+                  "pm.test(\"Informa correo_verificado\", () => pm.expect(pm.response.json()).to.have.property(\"correo_verificado\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 Renovar sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Cada uso entrega un token de renovación nuevo. Presentar dos veces el mismo invalida toda la cadena de sesión (401 sesion-revocada).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token_renovacion\": \"{{token_renovacion}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "const anterior = pm.environment.get(\"token_renovacion\");",
+                  "pm.test(\"El token de renovación rota\", () => pm.expect(pm.response.json().token_renovacion).to.not.eql(anterior));",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_acceso\", pm.response.json().token_acceso);",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_renovacion\", pm.response.json().token_renovacion);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.3 Cerrar sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token_renovacion\": \"{{token_renovacion}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Recuperar contraseña",
+      "description": "Entre 4.2 y 4.3 llega el código (SMS o correo, según `canal_reset`): cópialo en `codigo_reset`.",
+      "item": [
+        {
+          "name": "4.1 Iniciar recuperación",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/password/reset",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "description": "Responde 200 exista o no la cuenta, para no revelar qué correos son clientes.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code < 300) pm.environment.set(\"registro_id_reset\", pm.response.json().registro_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 Enviar código de recuperación",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/send",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "send"
+              ]
+            },
+            "description": "Con `canal_reset` = correo usa la plantilla de recuperación de SendGrid; con sms, el SMS de Twilio.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registro_id\": \"{{registro_id_reset}}\",\n  \"canal\": \"{{canal_reset}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.3 Verificar código de recuperación",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registro_id\": \"{{registro_id_reset}}\",\n  \"codigo\": \"{{codigo_reset}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code < 300) pm.environment.set(\"token_verificacion_reset\", pm.response.json().token_verificacion);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.4 Guardar contraseña nueva",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/password/reset/complete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "password",
+                "reset",
+                "complete"
+              ]
+            },
+            "description": "Cierra todas las sesiones abiertas del cliente. La colección pasa `contrasena_nueva` a `contrasena` para que el login (3.1) funcione después.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion_reset}}\",\n  \"contrasena\": \"{{contrasena_nueva}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) pm.environment.set(\"contrasena\", pm.environment.get(\"contrasena_nueva\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Errores esperados",
+      "description": "Cada petición debe fallar con el error indicado. Sirven para validar el manejo de errores de la app.",
+      "item": [
+        {
+          "name": "Petición mal formada (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"no-es-correo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Error parametros-invalidos\", () => pm.expect(pm.response.json().type).to.eql(\"https://api.holi.com.pe/errors/parametros-invalidos\"));",
+                  "pm.test(\"Indica el campo que falló\", () => pm.expect(pm.response.json().errores).to.be.an(\"array\").that.is.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sin aceptar términos (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_documento_id\": \"{{tipo_documento_id}}\",\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"acepta_terminos\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Error terminos-no-aceptados\", () => pm.expect(pm.response.json().type).to.eql(\"https://api.holi.com.pe/errors/terminos-no-aceptados\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Código por correo en el alta (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/send",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "send"
+              ]
+            },
+            "description": "Requiere un registro_id vigente (ejecuta 1.1 antes). El alta solo verifica el teléfono.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registro_id\": \"{{registro_id}}\",\n  \"canal\": \"correo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Error canal-no-disponible\", () => pm.expect(pm.response.json().type).to.eql(\"https://api.holi.com.pe/errors/canal-no-disponible\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Código incorrecto (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
+            "description": "Requiere un registro_id con código enviado (1.1 y 1.2). Gasta uno de los 5 intentos.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registro_id\": \"{{registro_id}}\",\n  \"codigo\": \"000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Error codigo-incorrecto\", () => pm.expect(pm.response.json().type).to.eql(\"https://api.holi.com.pe/errors/codigo-incorrecto\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraseña incorrecta (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Cuenta para el bloqueo de 10 intentos de Odoo: no lo ejecutes en bucle.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo}}\",\n  \"contrasena\": \"Incorrecta123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"Error credenciales-invalidas\", () => pm.expect(pm.response.json().type).to.eql(\"https://api.holi.com.pe/errors/credenciales-invalidas\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Perfil sin sesión (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/email/otp/send",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "email",
+                "otp",
+                "send"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"Error sesion-requerida\", () => pm.expect(pm.response.json().type).to.eql(\"https://api.holi.com.pe/errors/sesion-requerida\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

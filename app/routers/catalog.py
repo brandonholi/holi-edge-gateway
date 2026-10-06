@@ -1,206 +1,172 @@
 import json
 import logging
-from typing import List, Optional
-from fastapi import APIRouter, Header, Query, HTTPException, Request
+from typing import Dict, List, Optional
+
+from fastapi import APIRouter, Query
+from redis.asyncio import Redis
+
+from ..clients.odoo_client import OdooClient
 from ..clients.redis_client import get_cache_redis
-from ..clients.odoo_client import OdooClient, OdooClientError
-from ..schemas.catalog import ProductOut, CategoryOut, AvailabilityOut, PriceInfo, HomeOut
+from ..core.deps import RequestId, SedeRequerida
+from ..core.errors import ApiError
+from ..schemas.catalog import (
+    Categoria,
+    CategoriasOut,
+    DisponibilidadOut,
+    InicioOut,
+    Precio,
+    Producto,
+    ProductosOut,
+    Promocion,
+)
+from ..schemas.common import Paginacion
 
 _logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["Catalog"])
 odoo_client = OdooClient()
 
+POR_PAGINA_MAX = 100
 
-@router.get("/catalog", response_model=List[ProductOut])
-async def get_catalog(
-    category_id: Optional[int] = Query(None),
-    limit: int = Query(50, le=200),
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede")
-):
-    """Retrieve catalog products strictly from Redis holi-cache."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
 
-    redis = get_cache_redis()
-    sede = x_holi_sede.upper()
+def producto_desde_cache(prod: Dict[str, str], price: Optional[Dict[str, str]], banda: str,
+                         sku: str = "") -> Producto:
+    """Translates the English Redis hashes into the public product (ADR-012)."""
+    precio = None
+    if price:
+        promocion_id = price.get("promocion_id")
+        precio = Precio(
+            lista=float(price.get("list_price", 0.0)),
+            final=float(price.get("final_price", 0.0)),
+            descuento_pct=float(price.get("discount_percent", 0.0)),
+            moneda=price.get("currency", "PEN"),
+            promocion=Promocion(id=str(promocion_id)) if promocion_id else None,
+        )
 
-    # Get active version counters
-    v_cat = await redis.get(f"v:cat:{sede}") or "1"
+    return Producto(
+        id=int(prod.get("product_id", 0)),
+        sku=prod.get("sku", sku),
+        nombre=prod.get("name", ""),
+        categoria_id=int(prod["category_id"]) if prod.get("category_id") else None,
+        categoria=prod.get("category_name") or None,
+        unidad=prod.get("uom", "UND"),
+        codigo_barras=prod.get("barcode") or None,
+        imagen=prod.get("image_url") or None,
+        precio=precio,
+        disponibilidad=banda or "disponible",
+    )
+
+
+async def hidratar_productos(redis: Redis, sede: str, skus: List[str]) -> List[Producto]:
+    """Reads product, price and stock band of each SKU in one round trip."""
+    if not skus:
+        return []
+
     v_price = await redis.get(f"v:price:{sede}") or "1"
-
-    # Fetch SKUs from set
-    set_key = f"cat:{v_cat}:{sede}:{category_id}" if category_id else f"cat:{v_cat}:{sede}"
-    skus = list(await redis.smembers(set_key))[:limit]
-
-    products = []
     pipe = redis.pipeline()
     for sku in skus:
         pipe.hgetall(f"prod:{sku}")
         pipe.hgetall(f"price:{v_price}:{sede}:{sku}")
         pipe.get(f"stock:{sede}:{sku}")
-
     results = await pipe.execute()
+
+    productos = []
     for i in range(0, len(results), 3):
-        prod_data = results[i]
-        price_data = results[i + 1]
-        stock_band = results[i + 2] or "disponible"
-
-        if prod_data:
-            price_info = None
-            if price_data:
-                price_info = PriceInfo(
-                    list_price=float(price_data.get("list_price", 0.0)),
-                    final_price=float(price_data.get("final_price", 0.0)),
-                    discount_percent=float(price_data.get("discount_percent", 0.0)),
-                    currency=price_data.get("currency", "PEN"),
-                    promocion_id=price_data.get("promocion_id") or None,
-                )
-
-            products.append(ProductOut(
-                sku=prod_data.get("sku", ""),
-                product_id=int(prod_data.get("product_id", 0)),
-                name=prod_data.get("name", ""),
-                category_id=int(prod_data.get("category_id")) if prod_data.get("category_id") else None,
-                category_name=prod_data.get("category_name") or None,
-                uom=prod_data.get("uom", "UND"),
-                barcode=prod_data.get("barcode") or None,
-                image_url=prod_data.get("image_url") or None,
-                price=price_info,
-                availability=stock_band,
-            ))
-
-    return products
+        if results[i]:
+            productos.append(producto_desde_cache(results[i], results[i + 1], results[i + 2]))
+    return productos
 
 
-@router.get("/catalog/{sku}", response_model=ProductOut)
-async def get_product_detail(
-    sku: str,
-    request: Request,
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede")
+@router.get("/catalog", response_model=ProductosOut)
+async def listar_catalogo(
+    sede: SedeRequerida,
+    categoria_id: Optional[int] = Query(None, ge=1),
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(50, ge=1, le=POR_PAGINA_MAX),
 ):
-    """Retrieve detailed product information. Falls back to Odoo on cache-miss."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
-
+    """Catalog of the sede, strictly from Redis holi-cache."""
     redis = get_cache_redis()
-    sede = x_holi_sede.upper()
+    v_cat = await redis.get(f"v:cat:{sede}") or "1"
+
+    set_key = f"cat:{v_cat}:{sede}:{categoria_id}" if categoria_id else f"cat:{v_cat}:{sede}"
+    # Sorted so a page is stable between two calls; a Redis set has no order.
+    skus = sorted(await redis.smembers(set_key))
+    inicio = (pagina - 1) * por_pagina
+
+    return ProductosOut(
+        sede=sede,
+        version_catalogo=int(v_cat),
+        items=await hidratar_productos(redis, sede, skus[inicio:inicio + por_pagina]),
+        paginacion=Paginacion(pagina=pagina, por_pagina=por_pagina, total=len(skus)),
+    )
+
+
+@router.get("/catalog/{sku}", response_model=Producto)
+async def detalle_producto(sku: str, sede: SedeRequerida, request_id: RequestId):
+    """Product detail. Falls back to Odoo on cache-miss and hydrates Redis."""
+    redis = get_cache_redis()
 
     v_price = await redis.get(f"v:price:{sede}") or "1"
     prod_data = await redis.hgetall(f"prod:{sku}")
     price_data = await redis.hgetall(f"price:{v_price}:{sede}:{sku}")
-    stock_band = await redis.get(f"stock:{sede}:{sku}") or "disponible"
+    banda = await redis.get(f"stock:{sede}:{sku}") or "disponible"
 
-    # Cache miss fallback to Odoo
     if not prod_data or not price_data:
-        request_id = request.headers.get("X-Request-Id", "edge-cache-miss")
         _logger.info("Cache miss for SKU %s on Sede %s. Hydrating from Odoo...", sku, sede)
-        try:
-            odoo_resp = await odoo_client.fetch_product_sync(sku, sede, request_id)
-            master = odoo_resp.get("master", {})
-            price = odoo_resp.get("price", {})
-            stock_band = odoo_resp.get("stock_band", "disponible")
+        odoo_resp = await odoo_client.fetch_product_sync(sku, sede, request_id)
+        master = odoo_resp.get("master", {})
+        price = odoo_resp.get("price", {})
+        banda = odoo_resp.get("stock_band", "disponible")
 
-            if master:
-                # Populate Redis
-                pipe = redis.pipeline()
-                pipe.hset(f"prod:{sku}", mapping=master)
-                pipe.expire(f"prod:{sku}", 21600)
-                pipe.hset(f"price:{v_price}:{sede}:{sku}", mapping=price)
-                pipe.expire(f"price:{v_price}:{sede}:{sku}", 21600)
-                pipe.setex(f"stock:{sede}:{sku}", 15, stock_band)
-                await pipe.execute()
+        if master:
+            pipe = redis.pipeline()
+            pipe.hset(f"prod:{sku}", mapping=master)
+            pipe.expire(f"prod:{sku}", 21600)
+            pipe.hset(f"price:{v_price}:{sede}:{sku}", mapping=price)
+            pipe.expire(f"price:{v_price}:{sede}:{sku}", 21600)
+            pipe.setex(f"stock:{sede}:{sku}", 15, banda)
+            await pipe.execute()
 
-                prod_data = master
-                price_data = price
-        except OdooClientError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.detail)
+            prod_data = master
+            price_data = price
 
     if not prod_data:
-        raise HTTPException(status_code=404, detail=f"Product with SKU '{sku}' not found.")
+        raise ApiError("no-encontrado", f"El producto {sku} no se publica en la sede {sede}.")
 
-    price_info = None
-    if price_data:
-        price_info = PriceInfo(
-            list_price=float(price_data.get("list_price", 0.0)),
-            final_price=float(price_data.get("final_price", 0.0)),
-            discount_percent=float(price_data.get("discount_percent", 0.0)),
-            currency=price_data.get("currency", "PEN"),
-            promocion_id=price_data.get("promocion_id") or None,
-        )
-
-    return ProductOut(
-        sku=prod_data.get("sku", sku),
-        product_id=int(prod_data.get("product_id", 0)),
-        name=prod_data.get("name", ""),
-        category_id=int(prod_data.get("category_id")) if prod_data.get("category_id") else None,
-        category_name=prod_data.get("category_name") or None,
-        uom=prod_data.get("uom", "UND"),
-        barcode=prod_data.get("barcode") or None,
-        image_url=prod_data.get("image_url") or None,
-        price=price_info,
-        availability=stock_band,
-    )
+    return producto_desde_cache(prod_data, price_data, banda, sku)
 
 
-@router.get("/categories", response_model=List[CategoryOut])
-async def get_categories(
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede")
-):
-    """Retrieve category tree from Redis holi-cache."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
-
+@router.get("/categories", response_model=CategoriasOut)
+async def listar_categorias(sede: SedeRequerida):
+    """Category tree of the sede from Redis holi-cache."""
     redis = get_cache_redis()
-    sede = x_holi_sede.upper()
     v_cat = await redis.get(f"v:cat:{sede}") or "1"
 
     tree_data = await redis.hgetall(f"tree:{v_cat}:{sede}")
-    categories = []
+    categorias = []
     for cat_id, cat_json in tree_data.items():
         try:
             item = json.loads(cat_json)
-            categories.append(CategoryOut(
+            categorias.append(Categoria(
                 id=item.get("id", int(cat_id)),
-                name=item.get("name", ""),
-                parent_id=item.get("parent_id"),
+                nombre=item.get("name", ""),
+                padre_id=item.get("parent_id"),
                 total_skus=item.get("total_skus", 0),
             ))
         except Exception:
             continue
 
-    return categories
+    return CategoriasOut(sede=sede, items=categorias)
 
 
-@router.get("/availability/{sku}", response_model=AvailabilityOut)
-async def get_availability(
-    sku: str,
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede")
-):
-    """Retrieve fast stock availability band (TTL 15s) from Redis."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
-
-    redis = get_cache_redis()
-    sede = x_holi_sede.upper()
-
-    band = await redis.get(f"stock:{sede}:{sku}") or "disponible"
-    return AvailabilityOut(sku=sku, status=band)
+@router.get("/availability/{sku}", response_model=DisponibilidadOut)
+async def disponibilidad(sku: str, sede: SedeRequerida):
+    """Stock availability band (TTL 15s) from Redis."""
+    banda = await get_cache_redis().get(f"stock:{sede}:{sku}") or "disponible"
+    return DisponibilidadOut(sku=sku, disponibilidad=banda)
 
 
-@router.get("/home", response_model=HomeOut)
-async def get_home(
-    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede")
-):
-    """Retrieve featured and top selling SKUs for home screen."""
-    if not x_holi_sede:
-        raise HTTPException(status_code=400, detail="X-Holi-Sede header is required.")
-
-    redis = get_cache_redis()
-    sede = x_holi_sede.upper()
-
-    top_skus = await redis.zrevrange(f"top:{sede}", 0, 9)
-    return HomeOut(
-        sede=sede,
-        featured_skus=top_skus[:5],
-        top_selling_skus=top_skus,
-    )
+@router.get("/home", response_model=InicioOut)
+async def inicio(sede: SedeRequerida):
+    """Featured and top selling SKUs for the home screen."""
+    top_skus = await get_cache_redis().zrevrange(f"top:{sede}", 0, 9)
+    return InicioOut(sede=sede, skus_destacados=top_skus[:5], skus_mas_vendidos=top_skus)

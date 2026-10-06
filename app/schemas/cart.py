@@ -1,22 +1,23 @@
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
-class CartLine(BaseModel):
+class LineaCarrito(BaseModel):
     sku: str
-    qty: float = Field(gt=0)
-    price_unit: float
-    name: Optional[str] = None
+    nombre: Optional[str] = None
+    cantidad: float = Field(gt=0)
+    precio_unitario: float
 
 
-class CartUpdateIn(BaseModel):
+class LineaCarritoIn(BaseModel):
     sku: str
-    qty: float = Field(ge=0)
+    cantidad: float = Field(ge=0, description="0 quita la línea del carrito")
 
 
-class CartOut(BaseModel):
-    cart_id: str
+class CarritoOut(BaseModel):
+    carrito_id: str
     sede: str
-    lines: List[CartLine] = []
-    total_amount: float = 0.0
-    items_count: int = 0
+    lineas: List[LineaCarrito] = []
+    total: float = 0.0
+    cantidad_lineas: int = 0

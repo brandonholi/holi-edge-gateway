@@ -1,13 +1,14 @@
 import time
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .observability.logger import setup_logging
 from .clients.redis_client import init_redis_pools, close_redis_pools, get_cache_redis, get_state_redis
-from .routers import catalog, search, cart, checkout, auth
+from .core.errors import instalar_manejadores
+from .routers import catalog, search, cart, checkout, auth, master_data, perfil
+from .schemas.common import RESPUESTAS_ERROR
 
 setup_logging()
 
@@ -44,6 +45,8 @@ app.add_middleware(
 async def correlation_and_timing_middleware(request: Request, call_next):
     """Injects X-Request-Id and logs request duration."""
     req_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+    # Routes and error handlers read it from here (core/deps.RequestId).
+    request.state.request_id = req_id
     start_time = time.time()
 
     response = await call_next(request)
@@ -54,21 +57,8 @@ async def correlation_and_timing_middleware(request: Request, call_next):
     return response
 
 
-# RFC 7807 Problem Details Exception Handler
-@app.exception_handler(HTTPException)
-async def problem_details_handler(request: Request, exc: HTTPException):
-    problem = {
-        "type": "about:blank",
-        "title": exc.detail if isinstance(exc.detail, str) else "HTTP Error",
-        "status": exc.status_code,
-        "detail": str(exc.detail),
-        "instance": request.url.path,
-    }
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=problem,
-        headers={"Content-Type": "application/problem+json"}
-    )
+# RFC 7807 problem documents for every failure path (contrato-api-v1.md, section 4)
+instalar_manejadores(app)
 
 
 @app.get("/health", tags=["Health"])
@@ -96,9 +86,6 @@ async def health_check():
     }
 
 
-# Include Routers
-app.include_router(catalog.router)
-app.include_router(search.router)
-app.include_router(cart.router)
-app.include_router(checkout.router)
-app.include_router(auth.router)
+# Include Routers. Every public route documents the shared error format.
+for modulo in (catalog, search, cart, checkout, auth, master_data, perfil):
+    app.include_router(modulo.router, responses=RESPUESTAS_ERROR)

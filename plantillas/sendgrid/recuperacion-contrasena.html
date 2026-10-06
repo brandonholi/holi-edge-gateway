@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Recupera tu contraseña – Holi Supermercados</title>
+  <!--
+    PLANTILLA SENDGRID PARA TWILIO VERIFY – RECUPERACIÓN DE CONTRASEÑA – HOLI (ADR-017)
+    Se usa en "olvidé mi contraseña" cuando el cliente elige el correo
+    (POST /v1/auth/otp/send). Su ID (d-...) va en TWILIO_EMAIL_TEMPLATE_PASSWORD_RESET del Edge.
+    Variables:
+      {{twilio_code}}  -> código de verificación (lo llena Twilio)
+      {{first_name}}   -> primer nombre del cliente (lo envía el Edge en substitutions)
+    El cliente escribe el código en la app: no hay botón ni enlace de confirmación.
+    Colores: #F08215 naranja Holi · #6FB74C verde Holi · #4A8A31 verde oscuro (enlaces/pie)
+  -->
+  <style>
+    body { margin:0; padding:0; background:#F4F4F4; }
+    img { border:0; line-height:100%; outline:none; text-decoration:none; display:block; }
+    a { color:#4A8A31; }
+    @media only screen and (max-width:620px) {
+      .container { width:100% !important; }
+      .px { padding-left:20px !important; padding-right:20px !important; }
+      .h1 { font-size:24px !important; line-height:30px !important; }
+      .code { font-size:28px !important; letter-spacing:6px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background:#F4F4F4;">
+
+  <!-- Texto de vista previa en la bandeja -->
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">
+    Tu código para recuperar tu contraseña de Holi.
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4F4F4;">
+    <tr>
+      <td align="center" style="padding:24px 10px;">
+
+        <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background:#FFFFFF; border-radius:12px; overflow:hidden; font-family:Arial, Helvetica, sans-serif;">
+
+          <!-- Barra de marca -->
+          <tr><td style="background:#F08215; height:8px; line-height:8px; font-size:0;">&nbsp;</td></tr>
+          <tr><td style="background:#6FB74C; height:4px; line-height:4px; font-size:0;">&nbsp;</td></tr>
+
+          <!-- Logo. PENDIENTE: mover a una URL estable (cdn.holi.com.pe, ADR-008); esta ruta parece temporal -->
+          <tr>
+            <td align="center" style="padding:28px 20px 8px;">
+              <a href="https://holisupermercado.com" target="_blank">
+                <img src="https://holisupermercado.com/wp-temp/wp-content/uploads/2025/10/logo-holi-e1764281326813.png" width="120" alt="Holi Supermercados" style="width:120px; max-width:120px; height:auto;">
+              </a>
+            </td>
+          </tr>
+
+          <!-- Mensaje -->
+          <tr>
+            <td class="px" align="center" style="padding:16px 48px 8px; color:#222222; text-align:center;">
+              <h1 class="h1" style="margin:0 0 14px; font-size:28px; line-height:34px; color:#6FB74C; font-weight:bold;">
+                ¡Hola{{#if first_name}}, {{first_name}}{{/if}}!
+              </h1>
+              <p style="margin:0 0 8px; font-size:16px; line-height:24px;">
+                Recibimos una solicitud para <strong>recuperar tu contraseña</strong>.
+                Ingresa este código en la app para crear una nueva:
+              </p>
+            </td>
+          </tr>
+
+          <!-- Código -->
+          <tr>
+            <td class="px" style="padding:12px 48px 8px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F8EE; border-radius:10px;">
+                <tr>
+                  <td align="center" style="padding:20px; text-align:center;">
+                    <p class="code" style="margin:0; font-size:36px; line-height:44px; letter-spacing:10px; font-weight:bold; color:#F08215; font-family:'Courier New', Courier, monospace;">{{twilio_code}}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Vigencia -->
+          <tr>
+            <td class="px" align="center" style="padding:16px 48px 24px; font-size:13px; line-height:20px; color:#666666; text-align:center;">
+              El código vence en 10 minutos. No lo compartas con nadie.
+            </td>
+          </tr>
+
+          <!-- Aviso de seguridad -->
+          <tr>
+            <td class="px" style="padding:0 48px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #EEEEEE;">
+                <tr>
+                  <td style="padding-top:18px; font-size:13px; line-height:20px; color:#777777;">
+                    Si no pediste recuperar tu contraseña, ignora este correo: tu contraseña actual sigue siendo válida.
+                    Nunca te pediremos tu contraseña por correo.<br>
+                    ¿Necesitas ayuda? Escríbenos por
+                    <a href="https://api.whatsapp.com/send?phone=51933661717" target="_blank" style="color:#4A8A31; font-weight:bold;">WhatsApp: 933 661 717</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Pie -->
+          <tr>
+            <td align="center" class="px" style="background:#4A8A31; padding:22px 40px; font-size:12px; line-height:18px; color:#E8F3E1; text-align:center;">
+              <strong style="color:#FFFFFF;">Holi Supermercados</strong> · El supermercado que sí va contigo<br>
+              <a href="https://holisupermercado.com" target="_blank" style="color:#FFFFFF;">holisupermercado.com</a> &nbsp;|&nbsp;
+              <a href="https://www.instagram.com/holi.supermercado" target="_blank" style="color:#FFFFFF;">Instagram</a> &nbsp;|&nbsp;
+              <a href="https://www.facebook.com/holi.supermercado" target="_blank" style="color:#FFFFFF;">Facebook</a> &nbsp;|&nbsp;
+              <a href="https://www.tiktok.com/@holisupermercado" target="_blank" style="color:#FFFFFF;">TikTok</a><br><br>
+              Recibes este correo porque se pidió recuperar el acceso a la cuenta Holi de esta dirección.<br>
+              © 2026 Holi Supermercados. Todos los derechos reservados.
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -69,15 +69,21 @@ class OdooClient:
 
                 # Parse RFC 7807 error from Odoo if available
                 _odoo_breaker.record_failure()
+                extra: Dict[str, Any] = {}
                 try:
                     problem = res.json()
                     title = problem.get("title", "Odoo Error")
                     detail = problem.get("detail", res.text)
+                    # The last segment of `type` is the public error code when Odoo
+                    # raises one of ours (stock-insuficiente, cupon-no-valido...).
+                    extra = {k: v for k, v in problem.items()
+                             if k not in ("type", "title", "status", "detail", "instance")}
+                    extra["codigo"] = str(problem.get("type") or "").rstrip("/").rsplit("/", 1)[-1]
                 except Exception:
                     title = "Odoo Error"
                     detail = res.text
 
-                raise OdooClientError(res.status_code, title, detail)
+                raise OdooClientError(res.status_code, title, detail, extra)
 
             except (httpx.TimeoutException, httpx.ConnectError) as net_err:
                 _odoo_breaker.record_failure()
@@ -111,3 +117,98 @@ class OdooClient:
         }
         endpoint = f"/api/ecommerce/internal/delivery-slots?sede={sede_code}"
         return await self._call_odoo("GET", endpoint, headers=headers)
+
+    # --- Identity (RF-001, RF-051). Internal payloads are English by ADR-012. ---
+
+    async def auth_register_precheck(self, document_type_id: int, document_number: str, email: str,
+                                     phone: str, request_id: str) -> Dict[str, Any]:
+        """Whether the document, e-mail and phone are still free for a new app account."""
+        headers = {"X-Request-Id": request_id}
+        payload = {"document_type_id": document_type_id, "document_number": document_number,
+                   "email": email, "phone": phone}
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/register-precheck",
+                                     data=payload, headers=headers)
+
+    async def auth_partner_create(self, partner_data: Dict[str, Any], idempotency_key: str,
+                                  request_id: str) -> Dict[str, Any]:
+        """First and only write of the sign-up handshake (step 4)."""
+        headers = {
+            "Idempotency-Key": idempotency_key,
+            "X-Request-Id": request_id,
+        }
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/partner-create",
+                                     data=partner_data, headers=headers)
+
+    async def auth_verify_credentials(self, email: str, password: str, request_id: str) -> Dict[str, Any]:
+        """
+        Odoo owns the hash and returns the verdict (RF-001).
+
+        The password crosses this hop once, signed and over TLS, and the Odoo
+        side must never write the body to a log.
+        """
+        headers = {"X-Request-Id": request_id}
+        payload = {"email": email, "password": password}
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/verify-credentials",
+                                     data=payload, headers=headers)
+
+    async def auth_reset_lookup(self, email: str, request_id: str) -> Dict[str, Any]:
+        """Resolves the destination for a password reset code."""
+        headers = {"X-Request-Id": request_id}
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/reset-lookup",
+                                     data={"email": email}, headers=headers)
+
+    async def auth_set_password(self, partner_id: int, password: str, request_id: str) -> Dict[str, Any]:
+        """Closes a password reset once the code was approved."""
+        headers = {"X-Request-Id": request_id}
+        payload = {"partner_id": partner_id, "password": password}
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/set-password",
+                                     data=payload, headers=headers)
+
+    async def auth_email_status(self, partner_id: int, request_id: str) -> Dict[str, Any]:
+        """Current e-mail of the customer, its name and whether that address is verified."""
+        headers = {"X-Request-Id": request_id}
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/email-status",
+                                     data={"partner_id": partner_id}, headers=headers)
+
+    async def auth_mark_email_verified(self, partner_id: int, email: str, request_id: str) -> Dict[str, Any]:
+        """
+        Records that `email` was proven. Odoo refuses with 409 if the customer's
+        address changed while the code was in flight.
+        """
+        headers = {"X-Request-Id": request_id}
+        payload = {"partner_id": partner_id, "email": email}
+        return await self._call_odoo("POST", "/api/ecommerce/internal/auth/email-verified",
+                                     data=payload, headers=headers)
+
+    # --- Master data for the app selectors (slow-moving, cached by the Edge) ---
+
+    async def fetch_departments(self, request_id: str) -> Dict[str, Any]:
+        headers = {"X-Request-Id": request_id}
+        return await self._call_odoo("GET", "/api/ecommerce/internal/master/departments", headers=headers)
+
+    async def fetch_provinces(self, department_id: int, request_id: str) -> Dict[str, Any]:
+        headers = {"X-Request-Id": request_id}
+        endpoint = f"/api/ecommerce/internal/master/provinces?department_id={department_id}"
+        return await self._call_odoo("GET", endpoint, headers=headers)
+
+    async def fetch_districts(self, province_id: int, request_id: str) -> Dict[str, Any]:
+        headers = {"X-Request-Id": request_id}
+        endpoint = f"/api/ecommerce/internal/master/districts?province_id={province_id}"
+        return await self._call_odoo("GET", endpoint, headers=headers)
+
+    async def fetch_document_types(self, request_id: str) -> Dict[str, Any]:
+        headers = {"X-Request-Id": request_id}
+        return await self._call_odoo("GET", "/api/ecommerce/internal/master/document-types", headers=headers)
+
+    async def fetch_home_messages(self, sede_code: Optional[str], request_id: str) -> Dict[str, Any]:
+        headers = {"X-Request-Id": request_id}
+        endpoint = "/api/ecommerce/internal/master/home-messages"
+        if sede_code:
+            endpoint = f"{endpoint}?sede={sede_code}"
+        return await self._call_odoo("GET", endpoint, headers=headers)
+
+    async def fetch_coverage_zones(self, request_id: str) -> Dict[str, Any]:
+        """Every delivery polygon at once; the Edge resolves points locally."""
+        headers = {"X-Request-Id": request_id}
+        return await self._call_odoo("GET", "/api/ecommerce/internal/master/coverage-zones",
+                                     headers=headers)

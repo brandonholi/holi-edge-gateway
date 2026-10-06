@@ -1,35 +1,37 @@
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
+from .common import Lista
 
-class CheckoutLineItem(BaseModel):
+
+class LineaCompraIn(BaseModel):
     sku: str
-    qty: float = Field(gt=0)
-    price_unit: Optional[float] = None
+    cantidad: float = Field(gt=0)
+    precio_unitario: Optional[float] = None
 
 
-class CheckoutIn(BaseModel):
-    lines: List[CheckoutLineItem]
-    coupon_code: Optional[str] = None
-    delivery_slot_id: Optional[str] = None
-    delivery_address_id: Optional[int] = None
-    notes: Optional[str] = None
+class CompraIn(BaseModel):
+    lineas: List[LineaCompraIn]
+    cupon_codigo: Optional[str] = None
+    franja_id: Optional[str] = None
+    direccion_id: Optional[int] = None
+    notas: Optional[str] = None
 
 
-class CheckoutOut(BaseModel):
-    order_id: int
-    order_name: str
-    amount_total: float
-    state: str
-    idempotent: bool = False
+class CompraOut(BaseModel):
+    pedido_id: int
+    numero: str
+    importe_total: float
+    estado: str
+    idempotente: bool = Field(default=False, description="true si es la respuesta guardada de un intento anterior")
 
 
-class DeliverySlot(BaseModel):
-    slot_id: str
-    name: str
-    available: bool = True
+class Franja(BaseModel):
+    id: str
+    nombre: str
+    disponible: bool = True
 
 
-class DeliverySlotsOut(BaseModel):
+class FranjasOut(Lista[Franja]):
     sede: str
-    slots: List[DeliverySlot] = []

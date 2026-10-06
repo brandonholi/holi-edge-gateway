@@ -1,41 +1,65 @@
 from typing import List, Optional
-from pydantic import BaseModel
+
+from pydantic import BaseModel, Field
+
+from .common import Lista, ListaPaginada
+
+# ADR-012: Spanish on the public side. Redis keeps the English hash fields
+# (name, final_price...) and the routers translate when building these.
 
 
-class PriceInfo(BaseModel):
-    list_price: float
-    final_price: float
-    discount_percent: float = 0.0
-    currency: str = "PEN"
-    promocion_id: Optional[str] = None
+class Promocion(BaseModel):
+    id: str
 
 
-class ProductOut(BaseModel):
-    sku: str
-    product_id: int
-    name: str
-    category_id: Optional[int] = None
-    category_name: Optional[str] = None
-    uom: str = "UND"
-    barcode: Optional[str] = None
-    image_url: Optional[str] = None
-    price: Optional[PriceInfo] = None
-    availability: Optional[str] = None  # disponible, ultimas_unidades, agotado
+class Precio(BaseModel):
+    lista: float
+    final: float = Field(description="Ya incluye el descuento. La app no calcula descuentos")
+    descuento_pct: float = 0.0
+    moneda: str = "PEN"
+    promocion: Optional[Promocion] = None
 
 
-class CategoryOut(BaseModel):
+class Producto(BaseModel):
     id: int
-    name: str
-    parent_id: Optional[int] = None
+    sku: str
+    nombre: str
+    categoria_id: Optional[int] = None
+    categoria: Optional[str] = None
+    unidad: str = "UND"
+    codigo_barras: Optional[str] = None
+    imagen: Optional[str] = None
+    precio: Optional[Precio] = None
+    disponibilidad: str = Field(default="disponible", description="disponible · ultimas_unidades · agotado")
+
+
+class ProductosOut(ListaPaginada[Producto]):
+    sede: str
+    version_catalogo: int
+
+
+class BusquedaOut(ListaPaginada[Producto]):
+    sede: str
+    q: str
+
+
+class Categoria(BaseModel):
+    id: int
+    nombre: str
+    padre_id: Optional[int] = None
     total_skus: int = 0
 
 
-class AvailabilityOut(BaseModel):
-    sku: str
-    status: str  # disponible, ultimas_unidades, agotado
-
-
-class HomeOut(BaseModel):
+class CategoriasOut(Lista[Categoria]):
     sede: str
-    featured_skus: List[str] = []
-    top_selling_skus: List[str] = []
+
+
+class DisponibilidadOut(BaseModel):
+    sku: str
+    disponibilidad: str = Field(description="disponible · ultimas_unidades · agotado")
+
+
+class InicioOut(BaseModel):
+    sede: str
+    skus_destacados: List[str] = []
+    skus_mas_vendidos: List[str] = []

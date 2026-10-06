@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "e1b06fe7-550f-4de0-8090-c6aa5d9dfd8b",
+    "_postman_id": "ce1d5ff4-edce-4969-90db-6b90f7fef6bc",
     "name": "HOLI Edge · Alta de cuenta",
     "description": "Ciclo de alta del contrato API v1: alta con código SMS, verificación del correo, sesión y recuperación.\n\nImporta también el entorno `holi-edge-local`. Los códigos (SMS y correo) se copian a mano en las variables `codigo_sms`, `codigo_correo` y `codigo_reset`, así que ejecuta las carpetas paso a paso, no con el Runner.\n\nTodas las respuestas pasan por las pruebas comunes de la colección: X-Request-Id presente y, en errores, formato application/problem+json con un `type` del catálogo.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -26,7 +26,7 @@
   ],
   "item": [
     {
-      "name": "0. Salud",
+      "name": "0. Salud y datos maestros",
       "item": [
         {
           "name": "Estado del Edge",
@@ -61,6 +61,49 @@
                 "exec": [
                   "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"Redis conectado\", () => { const b = pm.response.json(); pm.expect(b.redis_cache && b.redis_state, \"levanta Redis: docker start holi-redis\").to.be.true; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tipos de documento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/document-types",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "document-types"
+              ]
+            },
+            "description": "Lee los documentos que acepta la app (los habilita el backoffice en Odoo) y guarda en `tipo_documento_id` el id del DNI (código SUNAT 1). Para registrarte con otro documento, cambia esa variable por el id que corresponda de esta lista."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "const tipos = pm.response.json().items;",
+                  "pm.test(\"Hay tipos habilitados\", () => pm.expect(tipos).to.be.an(\"array\").that.is.not.empty);",
+                  "const dni = tipos.find(t => t.codigo === \"1\") || tipos[0];",
+                  "if (dni) pm.environment.set(\"tipo_documento_id\", dni.id);",
+                  "pm.test(\"tipo_documento_id guardado en el entorno\", () => pm.expect(pm.environment.get(\"tipo_documento_id\")).to.eql(dni.id));"
                 ]
               }
             }
@@ -100,7 +143,7 @@
             "description": "`tipo_documento_id` sale de GET /v1/document-types (en holi_ecommerce: 5 = DNI, 4 = RUC). Si es DNI lo valida con json.pe (gasta un crédito si no está en caché); otros tipos quedan pendientes y exigen `nombre` y `apellido`. Abre un borrador de 15 min. No escribe nada en Odoo; si el documento ya es cliente de tienda, la cuenta se vincula a ese contacto en el paso 1.4. Si la cuenta ya existe responde 409 cuenta-ya-existe.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tipo_documento_id\": \"{{tipo_documento_id}}\",\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"nombre\": \"{{nombre}}\",\n  \"apellido\": \"{{apellido}}\",\n  \"fecha_nacimiento\": \"{{fecha_nacimiento}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false\n}",
+              "raw": "{\n  \"tipo_documento_id\": {{tipo_documento_id}},\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"nombre\": \"{{nombre}}\",\n  \"apellido\": \"{{apellido}}\",\n  \"fecha_nacimiento\": \"{{fecha_nacimiento}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -830,7 +873,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tipo_documento_id\": \"{{tipo_documento_id}}\",\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"acepta_terminos\": false\n}",
+              "raw": "{\n  \"tipo_documento_id\": {{tipo_documento_id}},\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"acepta_terminos\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"

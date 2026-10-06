@@ -26,10 +26,19 @@ router = APIRouter(prefix="/v1", tags=["Catalog"])
 odoo_client = OdooClient()
 
 POR_PAGINA_MAX = 100
+# A missing band means "unknown", and unknown stock is never sold as available (ADR-011).
+BANDA_SIN_DATO = "agotado"
+
+
+def banda_o_agotado(banda: Optional[str], sku: str, sede: str) -> str:
+    if banda:
+        return banda
+    _logger.warning("Missing stock band for %s on %s", sku, sede)
+    return BANDA_SIN_DATO
 
 
 def producto_desde_cache(prod: Dict[str, str], price: Optional[Dict[str, str]], banda: str,
-                         sku: str = "") -> Producto:
+                         sku: str = "", sede: str = "") -> Producto:
     """Translates the English Redis hashes into the public product (ADR-012)."""
     precio = None
     if price:
@@ -52,7 +61,7 @@ def producto_desde_cache(prod: Dict[str, str], price: Optional[Dict[str, str]], 
         codigo_barras=prod.get("barcode") or None,
         imagen=prod.get("image_url") or None,
         precio=precio,
-        disponibilidad=banda or "disponible",
+        disponibilidad=banda_o_agotado(banda, prod.get("sku", sku), sede),
     )
 
 
@@ -72,7 +81,7 @@ async def hidratar_productos(redis: Redis, sede: str, skus: List[str]) -> List[P
     productos = []
     for i in range(0, len(results), 3):
         if results[i]:
-            productos.append(producto_desde_cache(results[i], results[i + 1], results[i + 2]))
+            productos.append(producto_desde_cache(results[i], results[i + 1], results[i + 2], skus[i // 3], sede))
     return productos
 
 
@@ -108,14 +117,14 @@ async def detalle_producto(sku: str, sede: SedeRequerida, request_id: RequestId)
     v_price = await redis.get(f"v:price:{sede}") or "1"
     prod_data = await redis.hgetall(f"prod:{sku}")
     price_data = await redis.hgetall(f"price:{v_price}:{sede}:{sku}")
-    banda = await redis.get(f"stock:{sede}:{sku}") or "disponible"
+    banda = await redis.get(f"stock:{sede}:{sku}")
 
     if not prod_data or not price_data:
         _logger.info("Cache miss for SKU %s on Sede %s. Hydrating from Odoo...", sku, sede)
         odoo_resp = await odoo_client.fetch_product_sync(sku, sede, request_id)
         master = odoo_resp.get("master", {})
         price = odoo_resp.get("price", {})
-        banda = odoo_resp.get("stock_band", "disponible")
+        banda = odoo_resp.get("stock_band")
 
         if master:
             pipe = redis.pipeline()
@@ -123,7 +132,8 @@ async def detalle_producto(sku: str, sede: SedeRequerida, request_id: RequestId)
             pipe.expire(f"prod:{sku}", 21600)
             pipe.hset(f"price:{v_price}:{sede}:{sku}", mapping=price)
             pipe.expire(f"price:{v_price}:{sede}:{sku}", 21600)
-            pipe.setex(f"stock:{sede}:{sku}", 15, banda)
+            if banda:
+                pipe.setex(f"stock:{sede}:{sku}", 15, banda)
             await pipe.execute()
 
             prod_data = master
@@ -132,7 +142,7 @@ async def detalle_producto(sku: str, sede: SedeRequerida, request_id: RequestId)
     if not prod_data:
         raise ApiError("no-encontrado", f"El producto {sku} no se publica en la sede {sede}.")
 
-    return producto_desde_cache(prod_data, price_data, banda, sku)
+    return producto_desde_cache(prod_data, price_data, banda, sku, sede)
 
 
 @router.get("/categories", response_model=CategoriasOut)
@@ -161,8 +171,8 @@ async def listar_categorias(sede: SedeRequerida):
 @router.get("/availability/{sku}", response_model=DisponibilidadOut)
 async def disponibilidad(sku: str, sede: SedeRequerida):
     """Stock availability band (TTL 15s) from Redis."""
-    banda = await get_cache_redis().get(f"stock:{sede}:{sku}") or "disponible"
-    return DisponibilidadOut(sku=sku, disponibilidad=banda)
+    banda = await get_cache_redis().get(f"stock:{sede}:{sku}")
+    return DisponibilidadOut(sku=sku, disponibilidad=banda_o_agotado(banda, sku, sede))
 
 
 @router.get("/home", response_model=InicioOut)

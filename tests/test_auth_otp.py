@@ -110,6 +110,9 @@ class FakeRedis:
     async def smembers(self, key):
         return set(self.sets.get(key, set())) if self._alive(key) else set()
 
+    async def zrevrange(self, key, start, end):
+        return []
+
     # -- pipeline --
     def pipeline(self):
         return FakePipeline(self)
@@ -126,6 +129,14 @@ class FakePipeline:
 
     def expire(self, key, seconds, **kwargs):
         self.queue.append(("expire", (key, seconds), kwargs))
+        return self
+
+    def hgetall(self, key):
+        self.queue.append(("hgetall", (key,), {}))
+        return self
+
+    def get(self, key):
+        self.queue.append(("get", (key,), {}))
         return self
 
     async def execute(self):

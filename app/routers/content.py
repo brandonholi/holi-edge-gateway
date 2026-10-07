@@ -2,7 +2,10 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from typing import Literal
+
 from fastapi import APIRouter, Path, Query
+from pydantic import ValidationError
 from redis.asyncio import Redis
 
 from ..clients.redis_client import get_cache_redis
@@ -10,6 +13,8 @@ from ..core.deps import SedeRequerida
 from ..core.errors import ApiError
 from ..schemas.catalog import ProductosOut
 from ..schemas.common import Paginacion
+from ..schemas.content import (Banner, BannersOut, CategoriaChip, Mundo, MundoDetalle,
+                               MundosOut)
 from .catalog import POR_PAGINA_MAX, hidratar_productos
 
 router = APIRouter(prefix="/v1", tags=["Content"])
@@ -102,3 +107,111 @@ async def productos_de_coleccion(
         items=await hidratar_productos(redis, sede, ordenados[inicio:inicio + por_pagina]),
         paginacion=Paginacion(pagina=pagina, por_pagina=por_pagina, total=len(ordenados)),
     )
+
+
+async def _mundos_visibles(redis: Redis, sede: str) -> list:
+    """Worlds of `content:mundos` visible in the sede; malformed data is skipped."""
+    crudo = await leer_json(redis, "content:mundos")
+    if not isinstance(crudo, list):
+        return []
+    momento = ahora()
+    visibles = []
+    for item in crudo:
+        if not isinstance(item, dict) or not visible_en_sede(item, sede, momento):
+            continue
+        try:
+            visibles.append((item, Mundo(**item)))
+        except (ValidationError, TypeError):
+            continue
+    return visibles
+
+
+async def _arbol(redis: Redis, sede: str) -> dict:
+    v_cat = await redis.get(f"v:cat:{sede}") or "1"
+    return await redis.hgetall(f"tree:{v_cat}:{sede}")
+
+
+@router.get("/banners", response_model=BannersOut)
+async def listar_banners(
+    sede: SedeRequerida,
+    ubicacion: Literal["principal", "categoria"] = Query(...),
+    categoria_id: Optional[int] = Query(None, ge=1),
+):
+    """Banners valid now in the sede; images whose destination is not in the sede are dropped."""
+    if ubicacion == "categoria" and categoria_id is None:
+        raise ApiError("parametros-invalidos", errores=[
+            {"campo": "categoria_id", "mensaje": "Es obligatorio cuando ubicacion es categoria."}])
+
+    redis = get_cache_redis()
+    crudo = await leer_json(redis, "content:banners")
+    if not isinstance(crudo, list):
+        return BannersOut(items=[])
+    momento = ahora()
+
+    candidatos = []
+    for item in crudo:
+        if not isinstance(item, dict) or not visible_en_sede(item, sede, momento):
+            continue
+        try:
+            banner = Banner(**item)
+        except (ValidationError, TypeError):
+            continue
+        if banner.ubicacion != ubicacion:
+            continue
+        if ubicacion == "categoria" and banner.categoria_id != categoria_id:
+            continue
+        candidatos.append(banner)
+    if not candidatos:
+        return BannersOut(items=[])
+
+    # Each key is read once per request and shared by every destination check.
+    v_cat = await redis.get(f"v:cat:{sede}") or "1"
+    catalogo = await redis.smembers(f"cat:{v_cat}:{sede}")
+    arbol = await redis.hgetall(f"tree:{v_cat}:{sede}")
+    mundos = {m.id for _, m in await _mundos_visibles(redis, sede)}
+    colecciones: dict = {}
+
+    async def existe_coleccion(valor: str) -> bool:
+        if valor not in colecciones:
+            colecciones[valor] = bool(await redis.get(f"col:{valor}"))
+        return colecciones[valor]
+
+    async def destino_valido(tipo: str, valor: str) -> bool:
+        if tipo == "producto":
+            return valor in catalogo
+        if tipo == "categoria":
+            return valor in arbol
+        if tipo == "mundo":
+            return valor.isdigit() and int(valor) in mundos
+        return await existe_coleccion(valor)
+
+    salida = []
+    for banner in candidatos:
+        banner.imagenes = [i for i in banner.imagenes
+                           if await destino_valido(i.destino.tipo, i.destino.id)]
+        if banner.imagenes:
+            salida.append(banner)
+    return BannersOut(items=salida)
+
+
+@router.get("/worlds", response_model=MundosOut)
+async def listar_mundos(sede: SedeRequerida):
+    """Worlds valid now in the sede."""
+    return MundosOut(items=[m for _, m in await _mundos_visibles(get_cache_redis(), sede)])
+
+
+@router.get("/worlds/{mundo_id}", response_model=MundoDetalle)
+async def detalle_mundo(sede: SedeRequerida, mundo_id: int = Path(..., ge=1)):
+    """A world with the category chips of its collection that exist in the sede's tree."""
+    redis = get_cache_redis()
+    mundo = next((m for _, m in await _mundos_visibles(redis, sede) if m.id == mundo_id), None)
+    if mundo is None:
+        raise ApiError("no-encontrado", f"El mundo {mundo_id} no existe en la sede {sede}.")
+
+    coleccion = await leer_json(redis, f"col:{mundo.coleccion_id}")
+    crudas = coleccion.get("categorias", []) if isinstance(coleccion, dict) else []
+    arbol = await _arbol(redis, sede)
+    chips = [CategoriaChip(id=c["id"], nombre=c.get("nombre", ""))
+             for c in crudas if isinstance(c, dict) and isinstance(c.get("id"), int)
+             and str(c["id"]) in arbol]
+    return MundoDetalle(**mundo.model_dump(), categorias=chips)

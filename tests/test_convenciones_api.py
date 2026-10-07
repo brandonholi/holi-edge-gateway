@@ -31,7 +31,7 @@ ESQUEMAS_EXENTOS = {"Problema"}
 
 # Arrays inside a resource that are not "the list" the endpoint returns. A new
 # one is a deliberate decision: add it here in the same change.
-COLECCIONES_DE_RECURSO = {"lineas", "canales_disponibles", "skus_destacados", "skus_mas_vendidos", "errores"}
+COLECCIONES_DE_RECURSO = {"lineas", "canales_disponibles", "skus_destacados", "skus_mas_vendidos", "errores", "categorias"}
 
 
 @pytest.fixture(scope="module")

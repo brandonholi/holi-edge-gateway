@@ -90,3 +90,27 @@ def test_visible_en_sede():
     assert not visible_en_sede({"fin": "2026-10-09T23:59:59Z"}, SEDE, t)
     assert visible_en_sede({"inicio": "2026-10-10T00:00:00Z", "fin": "2026-10-10T00:00:00Z"}, SEDE, t)
     assert visible_en_sede({"inicio": None, "fin": None}, SEDE, t)
+
+
+@pytest.mark.asyncio
+async def test_categoria_fuera_del_catalogo_de_la_sede_se_excluye(cliente):
+    redis = catalog_router.get_cache_redis()
+    redis.sets[f"cat:3:{SEDE}:10"] = {"A", "X"}  # X is not in cat:3:LIM01
+    res = await cliente.get("/v1/collections/5/products", headers=HEADERS)
+    assert skus(res) == ["A", "B", "D"]
+    res = await cliente.get("/v1/collections/5/products?categoria_id=10", headers=HEADERS)
+    assert skus(res) == ["A", "B"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("valor", ["[1]", '{"id":5,"categorias":[{"nombre":"x"}]}', '{"id":5,"categorias":5}'])
+async def test_coleccion_malformada_es_404(cliente, valor):
+    catalog_router.get_cache_redis().values["col:5"] = valor
+    res = await cliente.get("/v1/collections/5/products", headers=HEADERS)
+    assert res.status_code == 404
+
+
+def test_fecha_invalida_o_ingenua_no_es_visible():
+    t = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    assert not visible_en_sede({"inicio": "basura"}, SEDE, t)
+    assert not visible_en_sede({"fin": "2026-10-11T00:00:00"}, SEDE, t)

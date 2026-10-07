@@ -32,7 +32,10 @@ async def leer_json(redis: Redis, key: str) -> Optional[Any]:
 
 
 def _fecha(valor: str) -> datetime:
-    return datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    fecha = datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    if fecha.tzinfo is None:
+        raise ValueError("naive date")
+    return fecha
 
 
 def visible_en_sede(item: dict, sede: str, momento: datetime) -> bool:
@@ -41,9 +44,12 @@ def visible_en_sede(item: dict, sede: str, momento: datetime) -> bool:
     if tiendas and sede not in tiendas:
         return False
     inicio, fin = item.get("inicio"), item.get("fin")
-    if inicio and momento < _fecha(inicio):
-        return False
-    if fin and momento > _fecha(fin):
+    try:
+        if inicio and momento < _fecha(inicio):
+            return False
+        if fin and momento > _fecha(fin):
+            return False
+    except (ValueError, TypeError, AttributeError):
         return False
     return True
 
@@ -59,6 +65,10 @@ async def productos_de_coleccion(
     """Products of a collection in the sede: its categories (with descendants) plus loose SKUs."""
     redis = get_cache_redis()
     coleccion = await leer_json(redis, f"col:{coleccion_id}")
+    categorias_col = coleccion.get("categorias", []) if isinstance(coleccion, dict) else None
+    if not isinstance(categorias_col, list) or not all(
+            isinstance(c, dict) and isinstance(c.get("id"), int) for c in categorias_col):
+        coleccion = None
     if not coleccion:
         raise ApiError("no-encontrado", f"La colección {coleccion_id} no existe.")
 
@@ -76,14 +86,13 @@ async def productos_de_coleccion(
     pipe = redis.pipeline()
     for d in descendientes:
         pipe.smembers(f"{base}:{d}")
-    if categoria_id is None:
-        pipe.smembers(base)
+    pipe.smembers(base)
     resultados = await pipe.execute()
 
     encontrados = set().union(*resultados[:len(descendientes)])
     if categoria_id is None:
-        sueltos = set(coleccion.get("skus", []))
-        encontrados |= sueltos & resultados[-1]
+        encontrados |= set(coleccion.get("skus", []))
+    encontrados &= resultados[-1]
 
     ordenados = sorted(encontrados)
     inicio = (pagina - 1) * por_pagina

@@ -41,7 +41,7 @@ def cliente(monkeypatch):
         "10": json.dumps({"id": 10, "name": "Bebidas"}),
         "11": json.dumps({"id": 11, "name": "Gaseosas", "parent_id": 10}),
     }
-    img = {"md": "b/1-aaaaaaaa-md.webp", "lg": "b/1-aaaaaaaa-lg.webp"}
+    img = {"md": "https://cdn.holi.com.pe/b/1-aaaaaaaa-md.webp", "lg": "https://cdn.holi.com.pe/b/1-aaaaaaaa-lg.webp"}
 
     def slide(tipo, id_):
         return {"imagen": img, "texto_alternativo": "x", "etiqueta": None, "titulo": None,
@@ -61,7 +61,7 @@ def cliente(monkeypatch):
          "inicio": None, "fin": None, "imagenes": [slide("mundo", "4")]},
     ])
     redis.values["content:mundos"] = json.dumps([
-        {"id": 3, "nombre": "Verano", "subtitulo": None, "imagen": {"md": "m/3-aaaaaaaa-md.webp", "lg": None},
+        {"id": 3, "nombre": "Verano", "subtitulo": None, "imagen": {"md": "https://cdn.holi.com.pe/m/3-aaaaaaaa-md.webp", "lg": None},
          "coleccion_id": 6, "tiendas": [], "inicio": None, "fin": None},
         {"id": 4, "nombre": "Futuro", "subtitulo": None, "imagen": None,
          "coleccion_id": 6, "tiendas": [], "inicio": "2026-11-01T00:00:00Z", "fin": None},
@@ -236,3 +236,24 @@ async def test_mundo_no_visible_es_404(cliente):
     res = await cliente.get("/v1/worlds/4", headers=HEADERS)
     assert res.status_code == 404
     assert (await cliente.get("/v1/worlds/99", headers=HEADERS)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_mundo_con_coleccion_archivada_no_sale(cliente):
+    redis = catalog_router.get_cache_redis()
+    del redis.values["col:6"]  # archived collection: Odoo deleted its key
+    assert (await cliente.get("/v1/worlds", headers=HEADERS)).json()["items"] == []
+    assert (await cliente.get("/v1/worlds/3", headers=HEADERS)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_banner_hacia_mundo_con_coleccion_archivada_se_descarta(cliente):
+    redis = catalog_router.get_cache_redis()
+    banners = json.loads(redis.values["content:banners"])
+    banners[4]["imagenes"][0]["destino"] = {"tipo": "mundo", "id": "3"}
+    redis.values["content:banners"] = json.dumps(banners)
+    res = await cliente.get("/v1/banners?ubicacion=principal", headers=HEADERS)
+    assert 5 in [b["id"] for b in res.json()["items"]]
+    del redis.values["col:6"]
+    res = await cliente.get("/v1/banners?ubicacion=principal", headers=HEADERS)
+    assert 5 not in [b["id"] for b in res.json()["items"]]

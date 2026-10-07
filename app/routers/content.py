@@ -123,7 +123,14 @@ async def _mundos_visibles(redis: Redis, sede: str) -> list:
             visibles.append((item, Mundo(**item)))
         except (ValidationError, TypeError):
             continue
-    return visibles
+    if not visibles:
+        return []
+    # Defense against drift: a world whose collection is gone (archived) is a dead screen.
+    pipe = redis.pipeline()
+    for _, mundo in visibles:
+        pipe.get(f"col:{mundo.coleccion_id}")
+    existentes = await pipe.execute()
+    return [v for v, raw in zip(visibles, existentes) if raw]
 
 
 async def _arbol(redis: Redis, sede: str) -> dict:

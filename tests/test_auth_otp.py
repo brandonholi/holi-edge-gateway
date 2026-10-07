@@ -139,6 +139,10 @@ class FakePipeline:
         self.queue.append(("get", (key,), {}))
         return self
 
+    def smembers(self, key):
+        self.queue.append(("smembers", (key,), {}))
+        return self
+
     async def execute(self):
         results = []
         for name, args, kwargs in self.queue:

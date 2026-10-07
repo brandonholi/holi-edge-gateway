@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .observability.logger import setup_logging
 from .clients.redis_client import init_redis_pools, close_redis_pools, get_cache_redis, get_state_redis
 from .core.errors import instalar_manejadores
-from .routers import catalog, search, cart, checkout, auth, master_data, perfil
+from .routers import catalog, content, search, cart, checkout, auth, master_data, perfil
 from .schemas.common import RESPUESTAS_ERROR
 
 setup_logging()
@@ -87,5 +87,5 @@ async def health_check():
 
 
 # Include Routers. Every public route documents the shared error format.
-for modulo in (catalog, search, cart, checkout, auth, master_data, perfil):
+for modulo in (catalog, content, search, cart, checkout, auth, master_data, perfil):
     app.include_router(modulo.router, responses=RESPUESTAS_ERROR)

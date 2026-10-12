@@ -143,7 +143,7 @@
             "description": "`tipo_documento_id` sale de GET /v1/document-types (en holi_ecommerce: 5 = DNI, 4 = RUC). Si es DNI lo valida con json.pe (gasta un crédito si no está en caché); otros tipos quedan pendientes y exigen `nombre` y `apellido`. Abre un borrador de 15 min. No escribe nada en Odoo; si el documento ya es cliente de tienda, la cuenta se vincula a ese contacto en el paso 1.4. Si la cuenta ya existe responde 409 cuenta-ya-existe.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tipo_documento_id\": {{tipo_documento_id}},\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"nombre\": \"{{nombre}}\",\n  \"apellido\": \"{{apellido}}\",\n  \"fecha_nacimiento\": \"{{fecha_nacimiento}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false\n}",
+              "raw": "{\n  \"tipo_documento_id\": {{tipo_documento_id}},\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"nombre\": \"{{nombre}}\",\n  \"apellido\": \"{{apellido}}\",\n  \"fecha_nacimiento\": \"{{fecha_nacimiento}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -295,7 +295,7 @@
             "description": "Única escritura del alta en Odoo. El token de verificación es de un solo uso: repetir este paso responde 409 registro-ya-completado.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion}}\",\n  \"contrasena\": \"{{contrasena}}\"\n}",
+              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion}}\",\n  \"contrasena\": \"{{contrasena}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -860,20 +860,21 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/v1/auth/register",
+              "raw": "{{base_url}}/v1/auth/register/complete",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "v1",
                 "auth",
-                "register"
+                "register",
+                "complete"
               ]
             },
-            "description": "",
+            "description": "Los términos se aceptan en la pantalla de contraseña: sin acepta_terminos, /auth/register/complete responde 400 y el token no se consume.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tipo_documento_id\": {{tipo_documento_id}},\n  \"numero_documento\": \"{{numero_documento}}\",\n  \"correo\": \"{{correo}}\",\n  \"telefono\": \"{{telefono}}\",\n  \"acepta_terminos\": false\n}",
+              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion}}\",\n  \"contrasena\": \"{{contrasena}}\",\n  \"acepta_terminos\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"

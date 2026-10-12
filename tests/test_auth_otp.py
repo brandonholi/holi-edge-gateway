@@ -248,9 +248,10 @@ REGISTRO_VALIDO = {
     "numero_documento": "45678912",
     "correo": "brandon@example.com",
     "telefono": "987654321",
-    "acepta_terminos": True,
-    "acepta_comerciales": False,
 }
+
+# The consents travel with the password, on the last screen of the sign-up.
+CONSENTIMIENTOS = {"acepta_terminos": True, "acepta_comerciales": False}
 
 
 @pytest.fixture
@@ -314,7 +315,7 @@ async def test_flujo_completo_emite_sesion(entorno):
     token = verificacion.json()["token_verificacion"]
 
     res = await client.post("/v1/auth/register/complete",
-                            json={"token_verificacion": token, "contrasena": "Segura123"})
+                            json={"token_verificacion": token, "contrasena": "Segura123", **CONSENTIMIENTOS})
     assert res.status_code == 200, res.text
     sesion = res.json()
     assert sesion["cliente_id"] == 501
@@ -335,10 +336,45 @@ async def test_flujo_completo_emite_sesion(entorno):
 
 
 @pytest.mark.asyncio
-async def test_registro_exige_aceptar_terminos(entorno):
+async def test_completar_exige_aceptar_terminos(entorno):
+    """The terms are accepted on the password screen: refused there, before Odoo or the token."""
+    client, _redis, _provider, odoo, _reniec = entorno
+    registro_id = await _abrir_registro(client)
+    token = (await _verificar(client, registro_id)).json()["token_verificacion"]
+
+    for sin_aceptar in ({"acepta_terminos": False}, {}):
+        res = await client.post("/v1/auth/register/complete",
+                                json={"token_verificacion": token, "contrasena": "Segura123", **sin_aceptar})
+        assert res.status_code == 400
+        assert res.json()["type"].endswith("/terminos-no-aceptados")
+    assert odoo.created == []
+
+    # The token was not burned: accepting afterwards still completes the sign-up.
+    res = await client.post("/v1/auth/register/complete",
+                            json={"token_verificacion": token, "contrasena": "Segura123", **CONSENTIMIENTOS})
+    assert res.status_code == 200, res.text
+
+
+@pytest.mark.asyncio
+async def test_comerciales_es_opcional_y_llega_a_odoo(entorno):
+    client, _redis, _provider, odoo, _reniec = entorno
+    registro_id = await _abrir_registro(client)
+    token = (await _verificar(client, registro_id)).json()["token_verificacion"]
+    res = await client.post("/v1/auth/register/complete",
+                            json={"token_verificacion": token, "contrasena": "Segura123",
+                                  "acepta_terminos": True, "acepta_comerciales": True})
+    assert res.status_code == 200, res.text
+    assert odoo.created[0][0]["accepts_marketing"] is True
+
+
+@pytest.mark.asyncio
+async def test_registro_ya_no_pide_consentimientos(entorno):
+    """Step 1 opens without consents; an older app that still sends them is not rejected."""
     client, _redis, _provider, _odoo, _reniec = entorno
-    res = await client.post("/v1/auth/register", json={**REGISTRO_VALIDO, "acepta_terminos": False})
-    assert res.status_code == 400
+    assert (await client.post("/v1/auth/register", json=REGISTRO_VALIDO)).status_code == 200
+    viejo = {**REGISTRO_VALIDO, "correo": "otro@example.com", "telefono": "987654322",
+             "numero_documento": "45678913", "acepta_terminos": False}
+    assert (await client.post("/v1/auth/register", json=viejo)).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -495,7 +531,7 @@ async def test_token_de_verificacion_no_se_puede_reutilizar(entorno):
     registro_id = await _abrir_registro(client)
     token = (await _verificar(client, registro_id)).json()["token_verificacion"]
 
-    cuerpo = {"token_verificacion": token, "contrasena": "Segura123"}
+    cuerpo = {"token_verificacion": token, "contrasena": "Segura123", **CONSENTIMIENTOS}
     assert (await client.post("/v1/auth/register/complete", json=cuerpo)).status_code == 200
     assert (await client.post("/v1/auth/register/complete", json=cuerpo)).status_code == 409
     assert len(odoo.created) == 1
@@ -510,7 +546,7 @@ async def test_no_se_puede_completar_sin_verificar_el_telefono(entorno):
     token = create_verification_token(registro_id, auth_router.PROPOSITO_REGISTRO)
 
     res = await client.post("/v1/auth/register/complete",
-                            json={"token_verificacion": token, "contrasena": "Segura123"})
+                            json={"token_verificacion": token, "contrasena": "Segura123", **CONSENTIMIENTOS})
     assert res.status_code == 403
     assert odoo.created == []
 
@@ -525,7 +561,7 @@ async def test_token_de_reset_no_sirve_para_registrarse(entorno):
     token = create_verification_token(registro_id, auth_router.PROPOSITO_RESET)
 
     res = await client.post("/v1/auth/register/complete",
-                            json={"token_verificacion": token, "contrasena": "Segura123"})
+                            json={"token_verificacion": token, "contrasena": "Segura123", **CONSENTIMIENTOS})
     assert res.status_code == 401
 
 
@@ -536,7 +572,7 @@ async def test_contrasena_debil_es_rechazada(entorno):
     token = (await _verificar(client, registro_id)).json()["token_verificacion"]
 
     res = await client.post("/v1/auth/register/complete",
-                            json={"token_verificacion": token, "contrasena": "12345678"})
+                            json={"token_verificacion": token, "contrasena": "12345678", **CONSENTIMIENTOS})
     assert res.status_code == 400
     assert odoo.created == []
 

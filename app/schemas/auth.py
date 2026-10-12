@@ -19,8 +19,6 @@ class RegistroIn(BaseModel):
     apellido: Optional[str] = Field(
         default=None, description="Obligatorio si el documento no es DNI o si RENIEC no responde")
     fecha_nacimiento: Optional[str] = None
-    acepta_terminos: bool = False
-    acepta_comerciales: bool = False
 
     @field_validator("numero_documento")
     @classmethod
@@ -100,8 +98,13 @@ class OtpVerificarOut(BaseModel):
 
 
 class RegistroCompletarIn(BaseModel):
+    """Step 4, the password screen. The consents are given here, next to the password."""
     token_verificacion: str
     contrasena: str
+    acepta_terminos: bool = Field(
+        default=False, description="Obligatorio: sin aceptar los términos no se crea la cuenta")
+    acepta_comerciales: bool = Field(
+        default=False, description="Opcional: autoriza promociones y comunicaciones comerciales")
 
 
 class LoginIn(BaseModel):

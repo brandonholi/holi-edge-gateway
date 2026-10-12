@@ -226,9 +226,6 @@ async def registrar(payload: RegistroIn, request: Request):
     disappear on its own, and a script hammering this endpoint must not be able
     to fill the ERP with half-made partners.
     """
-    if not payload.acepta_terminos:
-        raise ApiError("terminos-no-aceptados", "Debes aceptar los términos y condiciones para registrarte.")
-
     state_redis = get_state_redis()
     request_id = _request_id(request)
     ip = _client_ip(request)
@@ -287,8 +284,6 @@ async def registrar(payload: RegistroIn, request: Request):
         "apellidos": apellidos,
         "nombre_desde_reniec": "1" if nombre_reniec else "0",
         "fecha_nacimiento": payload.fecha_nacimiento or "",
-        "acepta_terminos": "1",
-        "acepta_comerciales": "1" if payload.acepta_comerciales else "0",
         "estado_validacion": estado_validacion,
         "telefono_verificado": "0",
         "canal_preferido": _canal_sugerido(PROPOSITO_REGISTRO),
@@ -437,6 +432,10 @@ async def completar_registro(payload: RegistroCompletarIn, request: Request):
     Rule 3: the idempotency key is reserved (the token is burned) before Odoo is
     called, so a retried request cannot produce a second partner.
     """
+    # Checked before anything else so a missed checkbox does not burn the token.
+    if not payload.acepta_terminos:
+        raise ApiError("terminos-no-aceptados", "Debes aceptar los términos y condiciones para registrarte.")
+
     state_redis = get_state_redis()
     request_id = _request_id(request)
 
@@ -472,7 +471,7 @@ async def completar_registro(payload: RegistroCompletarIn, request: Request):
         "phone_verified": True,
         "verified_channel": borrador.get("canal_verificado", settings.OTP_CHANNEL_DEFAULT),
         "validation_state": borrador.get("estado_validacion", "pendiente"),
-        "accepts_marketing": borrador.get("acepta_comerciales") == "1",
+        "accepts_marketing": payload.acepta_comerciales,
         "account_origin": "registro_dni",
         "password": payload.contrasena,
     }

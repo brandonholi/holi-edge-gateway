@@ -211,4 +211,7 @@ async def listar_mensajes_inicio(
         settings.HOME_MESSAGES_TTL_SECONDS,
         lambda: odoo_client.fetch_home_messages(sede_code, request_id),
     )
-    return MensajesInicioOut(sede=sede_code, items=data.get("mensajes", []))
+    # Odoo already sorts by its sequence; orden states that position explicitly
+    # so the app never infers it from the array (Odoo sequence values are internal).
+    mensajes = [{**m, "orden": i} for i, m in enumerate(data.get("mensajes", []), start=1)]
+    return MensajesInicioOut(sede=sede_code, items=mensajes)

@@ -175,6 +175,19 @@ async def test_mensajes_de_inicio_sin_sesion_ni_sede(entorno):
 
 
 @pytest.mark.asyncio
+async def test_mensajes_traen_su_orden(entorno):
+    """Odoo sends them sorted; orden makes that order explicit for the app (1 = first)."""
+    client, _redis, odoo = entorno
+    odoo.mensajes = [
+        {"id": 7, "titulo": "Primero", "mensaje": "a", "tipo": "aviso"},
+        {"id": 3, "titulo": "Segundo", "mensaje": "b", "tipo": "info"},
+    ]
+    res = await client.get("/v1/home-messages")
+    items = res.json()["items"]
+    assert [(m["id"], m["orden"]) for m in items] == [(7, 1), (3, 2)]
+
+
+@pytest.mark.asyncio
 async def test_mensajes_se_pueden_acotar_por_sede(entorno):
     client, _redis, odoo = entorno
     res = await client.get("/v1/home-messages", params={"sede": "lim01"})

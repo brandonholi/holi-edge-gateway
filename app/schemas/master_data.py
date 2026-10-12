@@ -57,6 +57,7 @@ class MensajeInicio(BaseModel):
     titulo: str
     mensaje: str
     tipo: str = Field(description="info · aviso · promocion")
+    orden: int = Field(description="Posición en que se muestra: 1 primero. Los items ya llegan en este orden")
 
 
 class MensajesInicioOut(Lista[MensajeInicio]):

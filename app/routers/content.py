@@ -14,7 +14,7 @@ from ..core.errors import ApiError
 from ..schemas.catalog import ProductosOut
 from ..schemas.common import Paginacion
 from ..schemas.content import (Banner, BannersOut, CategoriaChip, Mundo, MundoDetalle,
-                               MundosOut)
+                               MundosOut, RecursoApp, RecursosAppOut)
 from .catalog import POR_PAGINA_MAX, hidratar_productos
 
 router = APIRouter(prefix="/v1", tags=["Content"])
@@ -222,3 +222,21 @@ async def detalle_mundo(sede: SedeRequerida, mundo_id: int = Path(..., ge=1)):
              for c in crudas if isinstance(c, dict) and isinstance(c.get("id"), int)
              and str(c["id"]) in arbol]
     return MundoDetalle(**mundo.model_dump(), categorias=chips)
+
+
+@router.get("/app-assets", response_model=RecursosAppOut)
+async def listar_recursos_app():
+    """
+    Files the app shows outside the catalog: the cover of the first screen, the
+    loading animation. Read at launch, before any sede, and only from Redis, so
+    it answers even with Odoo down. The app downloads each file from the CDN and
+    keeps it until its hash changes.
+    """
+    recursos = await leer_json(get_cache_redis(), "content:app_assets")
+    items = []
+    for item in recursos if isinstance(recursos, list) else []:
+        try:
+            items.append(RecursoApp(**item))
+        except (ValidationError, TypeError):
+            continue
+    return RecursosAppOut(items=items)

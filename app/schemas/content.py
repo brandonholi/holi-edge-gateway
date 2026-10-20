@@ -1,6 +1,6 @@
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .common import Lista
 
@@ -54,3 +54,15 @@ class CategoriaChip(BaseModel):
 
 class MundoDetalle(Mundo):
     categorias: List[CategoriaChip]
+
+
+class RecursoApp(BaseModel):
+    codigo: str = Field(description="Lugar de la app: portada_inicio · animacion_carga (pueden sumarse otros)")
+    url: str = Field(description="URL absoluta en el CDN; cambia cuando cambia el archivo")
+    tipo_mime: str = Field(description="application/json (Lottie) · image/webp · image/gif · image/png · image/jpeg")
+    hash: str = Field(description="Huella del archivo: volver a descargar solo si cambia")
+    actualizado_el: Optional[str] = Field(default=None, description="ISO 8601 UTC")
+
+
+class RecursosAppOut(Lista[RecursoApp]):
+    pass

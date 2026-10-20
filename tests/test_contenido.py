@@ -66,6 +66,11 @@ def cliente(monkeypatch):
         {"id": 4, "nombre": "Futuro", "subtitulo": None, "imagen": None,
          "coleccion_id": 6, "tiendas": [], "inicio": "2026-11-01T00:00:00Z", "fin": None},
     ])
+    redis.values["content:app_assets"] = json.dumps([
+        {"codigo": "animacion_carga", "url": "https://cdn.holi.com.pe/a/animacion_carga-1a2b3c4d.json",
+         "tipo_mime": "application/json", "hash": "1a2b3c4d", "actualizado_el": "2026-10-20T15:00:00Z"},
+        {"codigo": "roto"},
+    ])
     monkeypatch.setattr(content_router, "ahora",
                         lambda: datetime(2026, 10, 6, 12, tzinfo=timezone.utc))
     monkeypatch.setattr(catalog_router, "get_cache_redis", lambda: redis)
@@ -257,3 +262,22 @@ async def test_banner_hacia_mundo_con_coleccion_archivada_se_descarta(cliente):
     del redis.values["col:6"]
     res = await cliente.get("/v1/banners?ubicacion=principal", headers=HEADERS)
     assert 5 not in [b["id"] for b in res.json()["items"]]
+
+
+@pytest.mark.asyncio
+async def test_recursos_de_la_app_sin_sede(cliente):
+    """Read at launch, before a sede exists; a malformed entry is skipped, not a 500."""
+    res = await cliente.get("/v1/app-assets")
+    assert res.status_code == 200, res.text
+    assert res.json()["items"] == [{
+        "codigo": "animacion_carga", "url": "https://cdn.holi.com.pe/a/animacion_carga-1a2b3c4d.json",
+        "tipo_mime": "application/json", "hash": "1a2b3c4d", "actualizado_el": "2026-10-20T15:00:00Z",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_sin_recursos_publicados_lista_vacia(cliente, monkeypatch):
+    from tests.test_auth_otp import FakeRedis as Vacio
+    monkeypatch.setattr(content_router, "get_cache_redis", lambda: Vacio())
+    res = await cliente.get("/v1/app-assets")
+    assert res.json() == {"items": []}

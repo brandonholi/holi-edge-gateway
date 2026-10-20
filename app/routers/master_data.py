@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Query
 
-from ..clients.odoo_client import OdooClient
+from ..clients.odoo_client import OdooClient, OdooClientError
 from ..clients.redis_client import get_cache_redis
 from ..core.config import settings
 from ..core.deps import RequestId, SedeOpcional
@@ -13,6 +13,7 @@ from ..schemas.master_data import (
     CoberturaOut,
     DepartamentosOut,
     DistritosOut,
+    DocumentosLegalesOut,
     MensajeCobertura,
     MensajesInicioOut,
     ProvinciasOut,
@@ -185,6 +186,43 @@ async def resolver_cobertura(
         ),
         mensaje=None,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Legal texts shown at sign-up
+# --------------------------------------------------------------------------- #
+
+async def documentos_legales(cliente: OdooClient, request_id: str) -> list:
+    """
+    The legal texts in force. Sign-up checks the accepted versions against these
+    same cached texts, so the version it demands is the one the app was shown.
+    """
+    try:
+        data = await _cached(
+            "md:legal",
+            settings.LEGAL_DOCUMENTS_TTL_SECONDS,
+            lambda: cliente.fetch_legal_documents(request_id),
+        )
+    except OdooClientError as e:
+        if e.status_code != 404:
+            raise
+        # An Odoo without the legal texts yet (deploy order): nothing is published,
+        # and sign-up must keep working instead of failing on every attempt.
+        _logger.warning("Odoo has no legal-documents endpoint yet; serving no legal texts")
+        return []
+    return data.get("documentos", [])
+
+
+@router.get("/legal-documents", response_model=DocumentosLegalesOut)
+async def listar_documentos_legales(request_id: RequestId):
+    """
+    Terms and Conditions and the data-processing authorization, as HTML.
+
+    Read with no session: the password screen shows them before the account
+    exists. Each text carries its version, which the app sends back with the
+    password so Odoo records exactly what the customer accepted.
+    """
+    return DocumentosLegalesOut(items=await documentos_legales(odoo_client, request_id))
 
 
 # --------------------------------------------------------------------------- #

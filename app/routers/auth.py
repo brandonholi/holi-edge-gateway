@@ -44,7 +44,7 @@ from ..schemas.auth import (
     SesionOut,
 )
 from ..schemas.common import MensajeOut
-from .master_data import tipos_documento
+from .master_data import documentos_legales, tipos_documento
 
 _logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/auth", tags=["Auth"])
@@ -424,6 +424,30 @@ async def verificar_codigo(payload: OtpVerificarIn, request: Request):
     )
 
 
+async def _versiones_aceptadas(payload: RegistroCompletarIn, request_id: str) -> dict:
+    """
+    The legal texts the customer accepted, checked against the ones in force.
+
+    A text with nothing published is not demanded, so sign-up keeps working
+    before legal loads it. The data-processing text only counts when the
+    customer accepted commercial use, which is what that checkbox authorizes.
+    """
+    vigentes = {d.get("tipo"): d.get("version") for d in await documentos_legales(odoo_client, request_id)}
+    pedidas = {
+        "terminos": payload.version_terminos,
+        "tratamiento_datos": payload.version_tratamiento_datos if payload.acepta_comerciales else None,
+    }
+    for tipo in ("terminos", "tratamiento_datos") if payload.acepta_comerciales else ("terminos",):
+        if tipo in vigentes and pedidas[tipo] != vigentes[tipo]:
+            raise ApiError("texto-legal-desactualizado",
+                           "Los textos legales cambiaron. Vuelve a cargarlos y acéptalos de nuevo.")
+    return {
+        "terms_version": pedidas["terminos"] if "terminos" in vigentes else None,
+        "data_processing_version": (pedidas["tratamiento_datos"]
+                                    if "tratamiento_datos" in vigentes else None),
+    }
+
+
 @router.post("/register/complete", response_model=SesionOut)
 async def completar_registro(payload: RegistroCompletarIn, request: Request):
     """
@@ -449,6 +473,9 @@ async def completar_registro(payload: RegistroCompletarIn, request: Request):
     except PasswordPolicyError as e:
         raise ApiError("contrasena-debil", e.detail)
 
+    # Also before the burn: an outdated text must not cost the customer the code.
+    versiones = await _versiones_aceptadas(payload, request_id)
+
     # The burn is the idempotency reservation, so it has to happen before Odoo is
     # touched — but after the password is checked, so a rejected password does
     # not cost the customer the code they already received.
@@ -472,6 +499,7 @@ async def completar_registro(payload: RegistroCompletarIn, request: Request):
         "verified_channel": borrador.get("canal_verificado", settings.OTP_CHANNEL_DEFAULT),
         "validation_state": borrador.get("estado_validacion", "pendiente"),
         "accepts_marketing": payload.acepta_comerciales,
+        **versiones,
         "account_origin": "registro_dni",
         "password": payload.contrasena,
     }

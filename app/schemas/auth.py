@@ -105,6 +105,11 @@ class RegistroCompletarIn(BaseModel):
         default=False, description="Obligatorio: sin aceptar los términos no se crea la cuenta")
     acepta_comerciales: bool = Field(
         default=False, description="Opcional: autoriza promociones y comunicaciones comerciales")
+    version_terminos: Optional[int] = Field(
+        default=None, ge=1, description="version del texto terminos de /legal-documents que se mostró")
+    version_tratamiento_datos: Optional[int] = Field(
+        default=None, ge=1,
+        description="version del texto tratamiento_datos que se mostró; solo cuenta si acepta_comerciales")
 
 
 class LoginIn(BaseModel):

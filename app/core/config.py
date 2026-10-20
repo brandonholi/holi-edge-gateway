@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     # in minutes, not tomorrow.
     MASTER_DATA_TTL_SECONDS: int = 86400
     HOME_MESSAGES_TTL_SECONDS: int = 300
+    LEGAL_DOCUMENTS_TTL_SECONDS: int = 600
     # Delivery zones are operational: shrinking one, or taking a store off
     # the map, has to reach customers in minutes.
     COVERAGE_ZONES_TTL_SECONDS: int = 600

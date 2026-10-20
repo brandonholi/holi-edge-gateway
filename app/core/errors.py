@@ -61,6 +61,8 @@ CATALOGO: Dict[str, Tuple[int, str, str]] = {
     "franja-agotada": (409, "Franja agotada", "La franja de entrega elegida ya no tiene cupo."),
     "solicitud-en-curso": (409, "Solicitud en curso",
                            "Una solicitud con esta Idempotency-Key se está procesando. Reintenta en unos segundos."),
+    "texto-legal-desactualizado": (409, "Texto legal desactualizado",
+                                   "Los términos cambiaron. Vuelve a cargarlos y acéptalos de nuevo."),
     "conflicto": (409, "Conflicto", "La solicitud entra en conflicto con el estado actual."),
     # 410
     "registro-expirado": (410, "Registro expirado", "El registro expiró o no existe. Vuelve a iniciar el proceso."),

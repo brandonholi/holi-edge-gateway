@@ -207,6 +207,12 @@ class OdooClient:
             endpoint = f"{endpoint}?sede={sede_code}"
         return await self._call_odoo("GET", endpoint, headers=headers)
 
+    async def fetch_legal_documents(self, request_id: str) -> Dict[str, Any]:
+        """The legal texts in force, one per type, shown at sign-up."""
+        headers = {"X-Request-Id": request_id}
+        return await self._call_odoo("GET", "/api/ecommerce/internal/master/legal-documents",
+                                     headers=headers)
+
     async def fetch_coverage_zones(self, request_id: str) -> Dict[str, Any]:
         """Every delivery polygon at once; the Edge resolves points locally."""
         headers = {"X-Request-Id": request_id}

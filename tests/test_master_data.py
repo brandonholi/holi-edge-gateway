@@ -80,6 +80,13 @@ class FakeOdooMaster:
         self._guard(f"home-messages:{sede_code}")
         return {"mensajes": self.mensajes}
 
+    async def fetch_legal_documents(self, request_id):
+        self._guard("legal-documents")
+        return {"documentos": [
+            {"id": 4, "tipo": "terminos", "titulo": "Términos y Condiciones Generales", "version": 2,
+             "contenido_html": "<p><strong>1.</strong> Registro</p>", "publicado_el": "2026-10-20T15:00:00Z"},
+        ]}
+
 
 @pytest.fixture
 def entorno(monkeypatch):
@@ -172,6 +179,21 @@ async def test_mensajes_de_inicio_sin_sesion_ni_sede(entorno):
     assert cuerpo["sede"] is None
     assert cuerpo["items"][0]["titulo"] == "Horario especial"
     assert cuerpo["items"][0]["tipo"] == "aviso"
+
+
+@pytest.mark.asyncio
+async def test_textos_legales_sin_sesion_ni_sede(entorno):
+    """The password screen shows them before the account exists."""
+    client, _redis, odoo = entorno
+    res = await client.get("/v1/legal-documents")
+    assert res.status_code == 200, res.text
+    doc = res.json()["items"][0]
+    assert (doc["tipo"], doc["version"]) == ("terminos", 2)
+    assert "<strong>" in doc["contenido_html"]
+    assert "id" not in doc
+    # Cached: a second call does not reach Odoo.
+    await client.get("/v1/legal-documents")
+    assert odoo.calls.count("legal-documents") == 1
 
 
 @pytest.mark.asyncio

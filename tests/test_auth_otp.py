@@ -208,6 +208,17 @@ class FakeOdoo:
     async def fetch_document_types(self, request_id):
         return {"tipos_documento": self.TIPOS}
 
+    # The texts in force; a test can empty or bump them.
+    legales = [
+        {"id": 1, "tipo": "terminos", "titulo": "Términos", "version": 3,
+         "contenido_html": "<p>T</p>", "publicado_el": "2026-10-20T15:00:00Z"},
+        {"id": 2, "tipo": "tratamiento_datos", "titulo": "Datos", "version": 1,
+         "contenido_html": "<p>D</p>", "publicado_el": "2026-10-20T15:00:00Z"},
+    ]
+
+    async def fetch_legal_documents(self, request_id):
+        return {"documentos": self.legales}
+
     async def auth_register_precheck(self, document_type_id, document_number, email, phone, request_id):
         self.prechecked = (document_type_id, document_number)
         if not self.available:
@@ -251,7 +262,7 @@ REGISTRO_VALIDO = {
 }
 
 # The consents travel with the password, on the last screen of the sign-up.
-CONSENTIMIENTOS = {"acepta_terminos": True, "acepta_comerciales": False}
+CONSENTIMIENTOS = {"acepta_terminos": True, "acepta_comerciales": False, "version_terminos": 3}
 
 
 @pytest.fixture
@@ -362,9 +373,79 @@ async def test_comerciales_es_opcional_y_llega_a_odoo(entorno):
     token = (await _verificar(client, registro_id)).json()["token_verificacion"]
     res = await client.post("/v1/auth/register/complete",
                             json={"token_verificacion": token, "contrasena": "Segura123",
-                                  "acepta_terminos": True, "acepta_comerciales": True})
+                                  "acepta_terminos": True, "acepta_comerciales": True,
+                                  "version_terminos": 3, "version_tratamiento_datos": 1})
     assert res.status_code == 200, res.text
-    assert odoo.created[0][0]["accepts_marketing"] is True
+    enviado = odoo.created[0][0]
+    assert enviado["accepts_marketing"] is True
+    assert (enviado["terms_version"], enviado["data_processing_version"]) == (3, 1)
+
+
+@pytest.mark.asyncio
+async def test_version_de_terminos_desactualizada_no_consume_el_token(entorno):
+    """The app showed an old text: it must reload and show the current one before accepting."""
+    client, _redis, _provider, odoo, _reniec = entorno
+    registro_id = await _abrir_registro(client)
+    token = (await _verificar(client, registro_id)).json()["token_verificacion"]
+    base = {"token_verificacion": token, "contrasena": "Segura123", "acepta_terminos": True}
+
+    for version in ({"version_terminos": 2}, {}):
+        res = await client.post("/v1/auth/register/complete", json={**base, **version})
+        assert res.status_code == 409
+        assert res.json()["type"].endswith("/texto-legal-desactualizado")
+    assert odoo.created == []
+
+    res = await client.post("/v1/auth/register/complete", json={**base, "version_terminos": 3})
+    assert res.status_code == 200, res.text
+
+
+@pytest.mark.asyncio
+async def test_tratamiento_de_datos_solo_se_exige_si_acepta_comerciales(entorno):
+    client, _redis, _provider, odoo, _reniec = entorno
+    registro_id = await _abrir_registro(client)
+    token = (await _verificar(client, registro_id)).json()["token_verificacion"]
+    base = {"token_verificacion": token, "contrasena": "Segura123",
+            "acepta_terminos": True, "version_terminos": 3}
+
+    res = await client.post("/v1/auth/register/complete", json={**base, "acepta_comerciales": True})
+    assert res.status_code == 409
+
+    res = await client.post("/v1/auth/register/complete", json={**base, "version_tratamiento_datos": 9})
+    assert res.status_code == 200, res.text
+    # Not accepted, so not recorded, whatever version the app sent.
+    assert odoo.created[0][0]["data_processing_version"] is None
+
+
+@pytest.mark.asyncio
+async def test_odoo_sin_textos_legales_no_rompe_el_alta(entorno):
+    """The Edge may be deployed before the Odoo that serves the legal texts."""
+    from app.clients.odoo_client import OdooClientError
+    client, _redis, _provider, odoo, _reniec = entorno
+
+    async def sin_endpoint(request_id):
+        raise OdooClientError(404, "Not Found", "no route")
+    odoo.fetch_legal_documents = sin_endpoint
+
+    registro_id = await _abrir_registro(client)
+    token = (await _verificar(client, registro_id)).json()["token_verificacion"]
+    res = await client.post("/v1/auth/register/complete",
+                            json={"token_verificacion": token, "contrasena": "Segura123",
+                                  "acepta_terminos": True})
+    assert res.status_code == 200, res.text
+
+
+@pytest.mark.asyncio
+async def test_sin_textos_publicados_no_se_exige_version(entorno):
+    """Before legal loads the texts the sign-up keeps working; nothing is recorded."""
+    client, _redis, _provider, odoo, _reniec = entorno
+    odoo.legales = []
+    registro_id = await _abrir_registro(client)
+    token = (await _verificar(client, registro_id)).json()["token_verificacion"]
+    res = await client.post("/v1/auth/register/complete",
+                            json={"token_verificacion": token, "contrasena": "Segura123",
+                                  "acepta_terminos": True})
+    assert res.status_code == 200, res.text
+    assert odoo.created[0][0]["terms_version"] is None
 
 
 @pytest.mark.asyncio

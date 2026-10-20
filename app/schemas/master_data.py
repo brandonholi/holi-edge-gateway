@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from .common import Lista
@@ -58,6 +58,19 @@ class MensajeInicio(BaseModel):
     mensaje: str
     tipo: str = Field(description="info · aviso · promocion")
     orden: int = Field(description="Posición en que se muestra: 1 primero. Los items ya llegan en este orden")
+
+
+class DocumentoLegal(BaseModel):
+    tipo: Literal["terminos", "tratamiento_datos"] = Field(
+        description="terminos: Términos y Condiciones Generales · tratamiento_datos: autorización de tratamiento de datos")
+    titulo: str
+    version: int = Field(description="Se devuelve en /auth/register/complete para dejar constancia")
+    contenido_html: str = Field(description="HTML sanitizado en Odoo: títulos, párrafos, negritas y listas")
+    publicado_el: Optional[str] = Field(default=None, description="ISO 8601 UTC")
+
+
+class DocumentosLegalesOut(Lista[DocumentoLegal]):
+    pass
 
 
 class MensajesInicioOut(Lista[MensajeInicio]):

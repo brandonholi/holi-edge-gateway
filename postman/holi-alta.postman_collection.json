@@ -267,7 +267,40 @@
           ]
         },
         {
-          "name": "1.4 Crear la cuenta",
+          "name": "1.4 Textos legales",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items || [];",
+                  "const v = (tipo) => (items.find(d => d.tipo === tipo) || {}).version;",
+                  "pm.collectionVariables.set(\"version_terminos\", v(\"terminos\") ?? \"null\");",
+                  "pm.collectionVariables.set(\"version_tratamiento_datos\", v(\"tratamiento_datos\") ?? \"null\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/legal-documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "legal-documents"
+              ]
+            },
+            "description": "Términos y Condiciones y autorización de tratamiento de datos, en HTML. Guarda sus versiones para enviarlas en 1.5."
+          }
+        },
+        {
+          "name": "1.5 Crear la cuenta",
           "request": {
             "method": "POST",
             "header": [
@@ -295,7 +328,7 @@
             "description": "Única escritura del alta en Odoo. El token de verificación es de un solo uso: repetir este paso responde 409 registro-ya-completado.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion}}\",\n  \"contrasena\": \"{{contrasena}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false\n}",
+              "raw": "{\n  \"token_verificacion\": \"{{token_verificacion}}\",\n  \"contrasena\": \"{{contrasena}}\",\n  \"acepta_terminos\": true,\n  \"acepta_comerciales\": false,\n  \"version_terminos\": {{version_terminos}},\n  \"version_tratamiento_datos\": {{version_tratamiento_datos}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1087,6 +1120,16 @@
           ]
         }
       ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "version_terminos",
+      "value": "null"
+    },
+    {
+      "key": "version_tratamiento_datos",
+      "value": "null"
     }
   ]
 }

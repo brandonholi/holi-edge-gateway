@@ -147,7 +147,7 @@ async def detalle_producto(sku: str, sede: SedeRequerida, request_id: RequestId)
             pipe.hset(f"price:{v_price}:{sede}:{sku}", mapping=price)
             pipe.expire(f"price:{v_price}:{sede}:{sku}", 21600)
             if banda:
-                pipe.setex(f"stock:{sede}:{sku}", 15, banda)
+                pipe.set(f"stock:{sede}:{sku}", banda, ex=15)
             await pipe.execute()
 
             prod_data = master

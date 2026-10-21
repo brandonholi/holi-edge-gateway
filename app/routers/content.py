@@ -15,7 +15,7 @@ from ..schemas.catalog import ProductosOut
 from ..schemas.common import Paginacion
 from ..schemas.content import (Banner, BannersOut, CategoriaChip, Mundo, MundoDetalle,
                                MundosOut, RecursoApp, RecursosAppOut, CategoriaApp,
-                               CategoriasAppOut)
+                               CategoriasAppOut, SeccionHome, SeccionesHomeOut)
 from .catalog import POR_PAGINA_MAX, con_stock_primero, hidratar_productos
 
 router = APIRouter(prefix="/v1", tags=["Content"])
@@ -60,31 +60,22 @@ def visible_en_sede(item: dict, sede: str, momento: datetime) -> bool:
     return True
 
 
-@router.get("/collections/{coleccion_id}/products", response_model=ProductosOut)
-async def productos_de_coleccion(
-    sede: SedeRequerida,
-    coleccion_id: int = Path(..., ge=1),
-    categoria_id: Optional[int] = Query(None, ge=1),
-    pagina: int = Query(1, ge=1),
-    por_pagina: int = Query(50, ge=1, le=POR_PAGINA_MAX),
-):
-    """Products of a collection in the sede: its categories (with descendants) plus loose SKUs."""
-    redis = get_cache_redis()
-    coleccion = await leer_json(redis, f"col:{coleccion_id}")
-    categorias_col = coleccion.get("categorias", []) if isinstance(coleccion, dict) else None
-    if not isinstance(categorias_col, list) or not all(
-            isinstance(c, dict) and isinstance(c.get("id"), int) for c in categorias_col):
-        coleccion = None
-    if not coleccion:
-        raise ApiError("no-encontrado", f"La colección {coleccion_id} no existe.")
+def _coleccion_valida(coleccion: Any) -> Optional[dict]:
+    """The published collection, or None when missing or malformed."""
+    categorias = coleccion.get("categorias", []) if isinstance(coleccion, dict) else None
+    if not isinstance(categorias, list) or not all(
+            isinstance(c, dict) and isinstance(c.get("id"), int) for c in categorias):
+        return None
+    return coleccion
 
-    categorias = coleccion.get("categorias", [])
-    if categoria_id is not None:
-        categorias = [c for c in categorias if c["id"] == categoria_id]
-        if not categorias:
-            raise ApiError("parametros-invalidos", errores=[
-                {"campo": "categoria_id", "mensaje": "La categoría no pertenece a la colección."}])
 
+async def _skus_de_coleccion(redis: Redis, sede: str, coleccion: dict,
+                             categorias: list, con_sueltos: bool) -> tuple:
+    """
+    (catalog version, SKUs) of the collection in the sede: the categories with
+    their descendants, plus the loose SKUs when asked, always intersected with
+    the sede catalog and with stock first.
+    """
     v_cat = await redis.get(f"v:cat:{sede}") or "1"
     base = f"cat:{v_cat}:{sede}"
     descendientes = sorted({d for c in categorias for d in c.get("descendientes", [c["id"]])})
@@ -96,11 +87,35 @@ async def productos_de_coleccion(
     resultados = await pipe.execute()
 
     encontrados = set().union(*resultados[:len(descendientes)])
-    if categoria_id is None:
+    if con_sueltos:
         encontrados |= set(coleccion.get("skus", []))
     encontrados &= resultados[-1]
+    return v_cat, await con_stock_primero(redis, sede, sorted(encontrados))
 
-    ordenados = await con_stock_primero(redis, sede, sorted(encontrados))
+
+@router.get("/collections/{coleccion_id}/products", response_model=ProductosOut)
+async def productos_de_coleccion(
+    sede: SedeRequerida,
+    coleccion_id: int = Path(..., ge=1),
+    categoria_id: Optional[int] = Query(None, ge=1),
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(50, ge=1, le=POR_PAGINA_MAX),
+):
+    """Products of a collection in the sede: its categories (with descendants) plus loose SKUs."""
+    redis = get_cache_redis()
+    coleccion = _coleccion_valida(await leer_json(redis, f"col:{coleccion_id}"))
+    if not coleccion:
+        raise ApiError("no-encontrado", f"La colección {coleccion_id} no existe.")
+
+    categorias = coleccion.get("categorias", [])
+    if categoria_id is not None:
+        categorias = [c for c in categorias if c["id"] == categoria_id]
+        if not categorias:
+            raise ApiError("parametros-invalidos", errores=[
+                {"campo": "categoria_id", "mensaje": "La categoría no pertenece a la colección."}])
+
+    v_cat, ordenados = await _skus_de_coleccion(redis, sede, coleccion, categorias,
+                                                con_sueltos=categoria_id is None)
     inicio = (pagina - 1) * por_pagina
     return ProductosOut(
         sede=sede,
@@ -150,10 +165,19 @@ async def listar_banners(
         raise ApiError("parametros-invalidos", errores=[
             {"campo": "categoria_id", "mensaje": "Es obligatorio cuando ubicacion es categoria."}])
 
-    redis = get_cache_redis()
+    return BannersOut(items=await _banners_validos(
+        get_cache_redis(), sede,
+        lambda b: b.ubicacion == ubicacion and (ubicacion != "categoria" or b.categoria_id == categoria_id)))
+
+
+async def _banners_validos(redis: Redis, sede: str, aceptar) -> list:
+    """
+    Banners valid now in the sede that `aceptar` keeps, with the images whose
+    destination does not exist in the sede dropped, and banners left empty out.
+    """
     crudo = await leer_json(redis, "content:banners")
     if not isinstance(crudo, list):
-        return BannersOut(items=[])
+        return []
     momento = ahora()
 
     candidatos = []
@@ -164,13 +188,10 @@ async def listar_banners(
             banner = Banner(**item)
         except (ValidationError, TypeError):
             continue
-        if banner.ubicacion != ubicacion:
-            continue
-        if ubicacion == "categoria" and banner.categoria_id != categoria_id:
-            continue
-        candidatos.append(banner)
+        if aceptar(banner):
+            candidatos.append(banner)
     if not candidatos:
-        return BannersOut(items=[])
+        return []
 
     # Each key is read once per request and shared by every destination check.
     v_cat = await redis.get(f"v:cat:{sede}") or "1"
@@ -199,7 +220,7 @@ async def listar_banners(
                            if await destino_valido(i.destino.tipo, i.destino.id)]
         if banner.imagenes:
             salida.append(banner)
-    return BannersOut(items=salida)
+    return salida
 
 
 @router.get("/worlds", response_model=MundosOut)
@@ -269,3 +290,49 @@ async def listar_categorias_app(
         if str(categoria.id) in arbol and (categoria.destacada or not destacadas):
             items.append(categoria)
     return CategoriasAppOut(items=items[:DESTACADAS_MAX] if destacadas else items)
+
+
+PRODUCTOS_SECCION = (2, 8)
+
+
+@router.get("/home-sections", response_model=SeccionesHomeOut)
+async def listar_secciones_home(sede: SedeRequerida):
+    """
+    The blocks of the home screen, in order, ready to paint: header, banner and
+    the first products of the collection in the sede. A section with no products
+    in the sede is left out; one whose banner has nothing valid here keeps its
+    products and goes without banner.
+    """
+    redis = get_cache_redis()
+    crudo = await leer_json(redis, "content:home_sections")
+    momento = ahora()
+    visibles = [s for s in (crudo if isinstance(crudo, list) else [])
+                if isinstance(s, dict) and visible_en_sede(s, sede, momento)]
+    if not visibles:
+        return SeccionesHomeOut(items=[])
+
+    banners = {b.id: b for b in await _banners_validos(redis, sede, lambda b: b.ubicacion == "seccion")}
+    minimo, maximo = PRODUCTOS_SECCION
+    salida = []
+    for seccion in visibles:
+        try:
+            coleccion_id = int(seccion["coleccion_id"])
+            cantidad = min(max(int(seccion.get("cantidad") or minimo), minimo), maximo)
+            titulo = str(seccion["titulo"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        coleccion = _coleccion_valida(await leer_json(redis, f"col:{coleccion_id}"))
+        if not coleccion:
+            continue
+        _v, skus = await _skus_de_coleccion(redis, sede, coleccion, coleccion.get("categorias", []),
+                                            con_sueltos=True)
+        if not skus:
+            continue
+        salida.append(SeccionHome(
+            id=seccion.get("id", 0), titulo=titulo,
+            colores=[c for c in seccion.get("colores") or [] if isinstance(c, str)],
+            banner=banners.get(seccion.get("banner_id")),
+            productos=await hidratar_productos(redis, sede, skus[:cantidad]),
+            coleccion_id=coleccion_id,
+        ))
+    return SeccionesHomeOut(items=salida)

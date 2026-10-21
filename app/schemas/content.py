@@ -2,6 +2,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from .catalog import Producto
 from .common import Lista
 
 
@@ -26,7 +27,7 @@ class ImagenBanner(BaseModel):
 class Banner(BaseModel):
     id: int
     tipo: Literal["carrusel", "estatico"]
-    ubicacion: Literal["principal", "categoria"]
+    ubicacion: Literal["principal", "categoria", "seccion"]
     categoria_id: Optional[int] = None
     imagenes: List[ImagenBanner]
 
@@ -76,4 +77,17 @@ class CategoriaApp(BaseModel):
 
 
 class CategoriasAppOut(Lista[CategoriaApp]):
+    pass
+
+
+class SeccionHome(BaseModel):
+    id: int
+    titulo: str
+    colores: List[str] = Field(description="Fondo del encabezado: un color, o dos o tres para un degradado")
+    banner: Optional[Banner] = Field(default=None, description="Misma forma que /banners; nulo si no tiene")
+    productos: List[Producto] = Field(description="Los primeros de la colección en la sede, con stock primero")
+    coleccion_id: int = Field(description='"Ver todo": /collections/{coleccion_id}/products')
+
+
+class SeccionesHomeOut(Lista[SeccionHome]):
     pass

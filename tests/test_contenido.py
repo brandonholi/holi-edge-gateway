@@ -66,6 +66,23 @@ def cliente(monkeypatch):
         {"id": 4, "nombre": "Futuro", "subtitulo": None, "imagen": None,
          "coleccion_id": 6, "tiendas": [], "inicio": "2026-11-01T00:00:00Z", "fin": None},
     ])
+    redis.values["content:banners"] = json.dumps(json.loads(redis.values["content:banners"]) + [
+        {"id": 7, "tipo": "carrusel", "ubicacion": "seccion", "categoria_id": None, "tiendas": [],
+         "inicio": None, "fin": None, "imagenes": [slide("categoria", "10")]},
+        {"id": 8, "tipo": "estatico", "ubicacion": "seccion", "categoria_id": None, "tiendas": [],
+         "inicio": None, "fin": None, "imagenes": [slide("producto", "Z")]},
+    ])
+    redis.values["content:home_sections"] = json.dumps([
+        {"id": 1, "titulo": "BÁSICOS", "colores": ["#FDBA74", "#F97316"], "banner_id": 7,
+         "coleccion_id": 5, "cantidad": 2, "tiendas": [], "inicio": None, "fin": None},
+        {"id": 2, "titulo": "SIN BANNER VÁLIDO", "colores": ["#22C55E"], "banner_id": 8,
+         "coleccion_id": 5, "cantidad": 8, "tiendas": [], "inicio": None, "fin": None},
+        {"id": 3, "titulo": "OTRA TIENDA", "colores": [], "banner_id": None,
+         "coleccion_id": 5, "cantidad": 4, "tiendas": ["ARE01"], "inicio": None, "fin": None},
+        {"id": 4, "titulo": "COLECCIÓN VACÍA AQUÍ", "colores": [], "banner_id": None,
+         "coleccion_id": 99, "cantidad": 4, "tiendas": [], "inicio": None, "fin": None},
+        {"titulo": "rota"},
+    ])
     redis.values["content:app_categories"] = json.dumps([
         {"id": 10, "nombre": "Bebidas", "destacada": True,
          "imagen": {"md": "https://cdn.holi.com.pe/c/1-aaaaaaaa-md.webp", "lg": None}},
@@ -337,3 +354,26 @@ async def test_categorias_destacadas_para_el_home(cliente):
 async def test_categorias_de_la_app_exigen_sede(cliente):
     res = await cliente.get("/v1/home-categories")
     assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_secciones_del_home(cliente):
+    """Header, banner resolved for the sede, and the first products of the collection."""
+    res = await cliente.get("/v1/home-sections", headers=HEADERS)
+    assert res.status_code == 200, res.text
+    secciones = res.json()["items"]
+    assert [s["id"] for s in secciones] == [1, 2]  # 3: other store · 4: collection missing
+    basicos = secciones[0]
+    assert basicos["titulo"] == "BÁSICOS" and basicos["colores"] == ["#FDBA74", "#F97316"]
+    assert basicos["banner"]["id"] == 7 and basicos["banner"]["ubicacion"] == "seccion"
+    assert [p["sku"] for p in basicos["productos"]] == ["A", "B"]  # cantidad 2
+    assert basicos["coleccion_id"] == 5
+    # Banner 8 only points at a product outside the sede: the section stays, without banner.
+    assert secciones[1]["banner"] is None
+    assert [p["sku"] for p in secciones[1]["productos"]] == ["A", "B", "D"]
+
+
+@pytest.mark.asyncio
+async def test_banners_de_seccion_no_salen_en_el_principal(cliente):
+    res = await cliente.get("/v1/banners?ubicacion=principal", headers=HEADERS)
+    assert 7 not in [b["id"] for b in res.json()["items"]]

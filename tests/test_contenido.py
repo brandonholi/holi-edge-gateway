@@ -66,6 +66,13 @@ def cliente(monkeypatch):
         {"id": 4, "nombre": "Futuro", "subtitulo": None, "imagen": None,
          "coleccion_id": 6, "tiendas": [], "inicio": "2026-11-01T00:00:00Z", "fin": None},
     ])
+    redis.values["content:app_categories"] = json.dumps([
+        {"id": 10, "nombre": "Bebidas", "destacada": True,
+         "imagen": {"md": "https://cdn.holi.com.pe/c/1-aaaaaaaa-md.webp", "lg": None}},
+        {"id": 20, "nombre": "Sin productos aquí", "destacada": True, "imagen": None},
+        {"id": 11, "nombre": "Gaseosas", "destacada": False, "imagen": None},
+        {"nombre": "rota"},
+    ])
     redis.values["content:app_assets"] = json.dumps([
         {"codigo": "animacion_carga", "url": "https://cdn.holi.com.pe/a/animacion_carga-1a2b3c4d.json",
          "tipo_mime": "application/json", "hash": "1a2b3c4d", "actualizado_el": "2026-10-20T15:00:00Z"},
@@ -309,3 +316,24 @@ async def test_coleccion_pone_al_final_lo_agotado(cliente, monkeypatch):
     assert skus(res) == ["B", "D", "E", "A", "C"]
     pagina2 = await cliente.get("/v1/collections/9/products?por_pagina=3&pagina=2", headers=HEADERS)
     assert skus(pagina2) == ["A", "C"]
+
+
+@pytest.mark.asyncio
+async def test_categorias_de_la_app_en_su_orden_y_solo_con_productos(cliente):
+    """Category 20 is configured but empty in this sede, so it is not shown."""
+    res = await cliente.get("/v1/home-categories", headers=HEADERS)
+    assert res.status_code == 200, res.text
+    assert [(c["id"], c["destacada"]) for c in res.json()["items"]] == [(10, True), (11, False)]
+    assert res.json()["items"][0]["imagen"]["md"].endswith("-md.webp")
+
+
+@pytest.mark.asyncio
+async def test_categorias_destacadas_para_el_home(cliente):
+    res = await cliente.get("/v1/home-categories?destacadas=true", headers=HEADERS)
+    assert [c["id"] for c in res.json()["items"]] == [10]
+
+
+@pytest.mark.asyncio
+async def test_categorias_de_la_app_exigen_sede(cliente):
+    res = await cliente.get("/v1/home-categories")
+    assert res.status_code == 422

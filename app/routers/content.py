@@ -14,7 +14,8 @@ from ..core.errors import ApiError
 from ..schemas.catalog import ProductosOut
 from ..schemas.common import Paginacion
 from ..schemas.content import (Banner, BannersOut, CategoriaChip, Mundo, MundoDetalle,
-                               MundosOut, RecursoApp, RecursosAppOut)
+                               MundosOut, RecursoApp, RecursosAppOut, CategoriaApp,
+                               CategoriasAppOut)
 from .catalog import POR_PAGINA_MAX, con_stock_primero, hidratar_productos
 
 router = APIRouter(prefix="/v1", tags=["Content"])
@@ -240,3 +241,31 @@ async def listar_recursos_app():
         except (ValidationError, TypeError):
             continue
     return RecursosAppOut(items=items)
+
+
+DESTACADAS_MAX = 5
+
+
+@router.get("/home-categories", response_model=CategoriasAppOut)
+async def listar_categorias_app(
+    sede: SedeRequerida,
+    destacadas: bool = Query(False, description="true: solo las de la pantalla principal (hasta 5)"),
+):
+    """
+    The categories chosen in the back office for the app's category screens, in
+    their order. One with no products in the sede is left out, so a tap never
+    opens an empty list. This is a showcase only: /catalog and the collections
+    keep working with every category.
+    """
+    redis = get_cache_redis()
+    configuradas = await leer_json(redis, "content:app_categories")
+    arbol = await _arbol(redis, sede)
+    items = []
+    for item in configuradas if isinstance(configuradas, list) else []:
+        try:
+            categoria = CategoriaApp(**item)
+        except (ValidationError, TypeError):
+            continue
+        if str(categoria.id) in arbol and (categoria.destacada or not destacadas):
+            items.append(categoria)
+    return CategoriasAppOut(items=items[:DESTACADAS_MAX] if destacadas else items)

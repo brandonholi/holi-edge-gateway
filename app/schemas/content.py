@@ -66,3 +66,14 @@ class RecursoApp(BaseModel):
 
 class RecursosAppOut(Lista[RecursoApp]):
     pass
+
+
+class CategoriaApp(BaseModel):
+    id: int = Field(description="id de la categoría: el mismo de /catalog?categoria_id=")
+    nombre: str
+    imagen: Optional[ImagenCdn] = Field(default=None, description="Nula si no tiene imagen: usar el ícono por defecto")
+    destacada: bool = Field(description="Va en la pantalla principal")
+
+
+class CategoriasAppOut(Lista[CategoriaApp]):
+    pass

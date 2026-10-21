@@ -1,8 +1,15 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The project's .env, wherever uvicorn is started from. A relative ".env" is
+# resolved against the working directory, and starting from another folder
+# silently ran with defaults: no HMAC secret, so every Odoo call was refused.
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     # App
     ENVIRONMENT: str = "development"

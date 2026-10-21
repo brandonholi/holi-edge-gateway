@@ -99,6 +99,27 @@ async def hidratar_productos(redis: Redis, sede: str, skus: List[str]) -> List[P
     return productos
 
 
+async def descendientes_en_arbol(redis: Redis, sede: str, v_cat: str, categoria_id: int) -> List[int]:
+    """The category and every descendant published in the sede's tree."""
+    arbol = await redis.hgetall(f"tree:{v_cat}:{sede}")
+    hijos: Dict[int, List[int]] = {}
+    for crudo in arbol.values():
+        try:
+            nodo = json.loads(crudo)
+            if nodo.get("parent_id"):
+                hijos.setdefault(int(nodo["parent_id"]), []).append(int(nodo["id"]))
+        except (ValueError, TypeError, KeyError):
+            continue
+    encontrados, pendientes = [], [categoria_id]
+    while pendientes:
+        actual = pendientes.pop()
+        if actual in encontrados:
+            continue
+        encontrados.append(actual)
+        pendientes.extend(hijos.get(actual, []))
+    return encontrados
+
+
 @router.get("/catalog", response_model=ProductosOut)
 async def listar_catalogo(
     sede: SedeRequerida,
@@ -110,9 +131,18 @@ async def listar_catalogo(
     redis = get_cache_redis()
     v_cat = await redis.get(f"v:cat:{sede}") or "1"
 
-    set_key = f"cat:{v_cat}:{sede}:{categoria_id}" if categoria_id else f"cat:{v_cat}:{sede}"
+    if categoria_id:
+        # Products sit in their own category only, so a parent (the ones the home
+        # screen features) gathers the sets of all its descendants in the tree.
+        categorias = await descendientes_en_arbol(redis, sede, v_cat, categoria_id)
+        pipe = redis.pipeline()
+        for c in categorias:
+            pipe.smembers(f"cat:{v_cat}:{sede}:{c}")
+        encontrados = set().union(*await pipe.execute()) if categorias else set()
+    else:
+        encontrados = await redis.smembers(f"cat:{v_cat}:{sede}")
     # Sorted so a page is stable between two calls; a Redis set has no order.
-    skus = sorted(await redis.smembers(set_key))
+    skus = sorted(encontrados)
     inicio = (pagina - 1) * por_pagina
 
     return ProductosOut(

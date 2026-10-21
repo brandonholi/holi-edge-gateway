@@ -15,7 +15,7 @@ from ..schemas.catalog import ProductosOut
 from ..schemas.common import Paginacion
 from ..schemas.content import (Banner, BannersOut, CategoriaChip, Mundo, MundoDetalle,
                                MundosOut, RecursoApp, RecursosAppOut)
-from .catalog import POR_PAGINA_MAX, hidratar_productos
+from .catalog import POR_PAGINA_MAX, con_stock_primero, hidratar_productos
 
 router = APIRouter(prefix="/v1", tags=["Content"])
 
@@ -99,7 +99,7 @@ async def productos_de_coleccion(
         encontrados |= set(coleccion.get("skus", []))
     encontrados &= resultados[-1]
 
-    ordenados = sorted(encontrados)
+    ordenados = await con_stock_primero(redis, sede, sorted(encontrados))
     inicio = (pagina - 1) * por_pagina
     return ProductosOut(
         sede=sede,

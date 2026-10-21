@@ -65,6 +65,20 @@ def producto_desde_cache(prod: Dict[str, str], price: Optional[Dict[str, str]], 
     )
 
 
+async def con_stock_primero(redis: Redis, sede: str, skus: List[str]) -> List[str]:
+    """
+    The SKUs in their order, but those with stock first and the sold-out ones
+    last. A missing band counts as sold out (ADR-011). One pipelined read for the
+    whole list, since the order has to be known before a page can be cut.
+    """
+    pipe = redis.pipeline()
+    for sku in skus:
+        pipe.get(f"stock:{sede}:{sku}")
+    bandas = await pipe.execute()
+    agotado = {sku for sku, banda in zip(skus, bandas) if (banda or BANDA_SIN_DATO) == "agotado"}
+    return [s for s in skus if s not in agotado] + [s for s in skus if s in agotado]
+
+
 async def hidratar_productos(redis: Redis, sede: str, skus: List[str]) -> List[Producto]:
     """Reads product, price and stock band of each SKU in one round trip."""
     if not skus:

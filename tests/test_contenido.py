@@ -281,3 +281,31 @@ async def test_sin_recursos_publicados_lista_vacia(cliente, monkeypatch):
     monkeypatch.setattr(content_router, "get_cache_redis", lambda: Vacio())
     res = await cliente.get("/v1/app-assets")
     assert res.json() == {"items": []}
+
+
+@pytest.mark.asyncio
+async def test_coleccion_pone_al_final_lo_agotado(cliente, monkeypatch):
+    """With stock first, sold out last; no band counts as sold out. Ties keep the SKU order."""
+    from tests.test_auth_otp import FakeRedis as Redis
+    redis = Redis()
+    redis.values[f"v:cat:{SEDE}"] = "3"
+    redis.sets[f"cat:3:{SEDE}"] = {"A", "B", "C", "D", "E"}
+    redis.sets[f"cat:3:{SEDE}:10"] = {"A", "B", "C", "D", "E"}
+    for sku in "ABCDE":
+        redis.hashes[f"prod:{sku}"] = {"product_id": "1", "sku": sku, "name": sku}
+        redis.hashes[f"price:1:{SEDE}:{sku}"] = {"list_price": "5", "final_price": "5"}
+    redis.values[f"stock:{SEDE}:A"] = "agotado"
+    redis.values[f"stock:{SEDE}:B"] = "disponible"
+    redis.values[f"stock:{SEDE}:D"] = "ultimas_unidades"
+    redis.values[f"stock:{SEDE}:E"] = "disponible"
+    redis.values["col:9"] = json.dumps({
+        "id": 9, "nombre": "Orden", "skus": [],
+        "categorias": [{"id": 10, "nombre": "Bebidas", "descendientes": [10]}],
+    })
+    monkeypatch.setattr(catalog_router, "get_cache_redis", lambda: redis)
+    monkeypatch.setattr(content_router, "get_cache_redis", lambda: redis)
+
+    res = await cliente.get("/v1/collections/9/products", headers=HEADERS)
+    assert skus(res) == ["B", "D", "E", "A", "C"]
+    pagina2 = await cliente.get("/v1/collections/9/products?por_pagina=3&pagina=2", headers=HEADERS)
+    assert skus(pagina2) == ["A", "C"]

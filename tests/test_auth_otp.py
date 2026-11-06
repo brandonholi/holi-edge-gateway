@@ -143,6 +143,14 @@ class FakePipeline:
         self.queue.append(("smembers", (key,), {}))
         return self
 
+    def hset(self, key, field=None, value=None, mapping=None):
+        self.queue.append(("hset", (key, field, value), {"mapping": mapping}))
+        return self
+
+    def set(self, key, value, **kwargs):
+        self.queue.append(("set", (key, value), kwargs))
+        return self
+
     async def execute(self):
         results = []
         for name, args, kwargs in self.queue:

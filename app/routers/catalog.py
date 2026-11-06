@@ -38,8 +38,10 @@ def banda_o_agotado(banda: Optional[str], sku: str, sede: str) -> str:
 
 
 def producto_desde_cache(prod: Dict[str, str], price: Optional[Dict[str, str]], banda: str,
-                         sku: str = "", sede: str = "") -> Producto:
-    """Translates the English Redis hashes into the public product (ADR-012)."""
+                         sku: str = "", sede: str = "", con_descripcion: bool = False) -> Producto:
+    """Translates the English Redis hashes into the public product (ADR-012).
+
+    The description only travels in the detail: listings stay light."""
     precio = None
     if price:
         promocion_id = price.get("promocion_id")
@@ -60,6 +62,7 @@ def producto_desde_cache(prod: Dict[str, str], price: Optional[Dict[str, str]], 
         unidad=prod.get("uom", "UND"),
         codigo_barras=prod.get("barcode") or None,
         imagen=prod.get("image_url") or None,
+        descripcion=(prod.get("description") or None) if con_descripcion else None,
         precio=precio,
         disponibilidad=banda_o_agotado(banda, prod.get("sku", sku), sede),
     )
@@ -186,7 +189,7 @@ async def detalle_producto(sku: str, sede: SedeRequerida, request_id: RequestId)
     if not prod_data:
         raise ApiError("no-encontrado", f"El producto {sku} no se publica en la sede {sede}.")
 
-    return producto_desde_cache(prod_data, price_data, banda, sku, sede)
+    return producto_desde_cache(prod_data, price_data, banda, sku, sede, con_descripcion=True)
 
 
 @router.get("/categories", response_model=CategoriasOut)

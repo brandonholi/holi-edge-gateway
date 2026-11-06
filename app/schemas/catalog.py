@@ -29,6 +29,7 @@ class Producto(BaseModel):
     unidad: str = "UND"
     codigo_barras: Optional[str] = None
     imagen: Optional[str] = None
+    descripcion: Optional[str] = Field(default=None, description="Solo en el detalle; null en los listados")
     precio: Optional[Precio] = None
     disponibilidad: str = Field(default="disponible", description="disponible · ultimas_unidades · agotado")
 

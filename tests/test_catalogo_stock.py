@@ -84,3 +84,56 @@ async def test_categoria_padre_incluye_sus_subcategorias(monkeypatch):
     assert res.json()["paginacion"]["total"] == 2
     hoja = await client.get("/v1/catalog?categoria_id=12", headers=HEADERS)
     assert [p["sku"] for p in hoja.json()["items"]] == ["B"]
+
+
+@pytest.fixture
+def con_descripcion(monkeypatch):
+    redis = FakeRedis()
+    redis.hashes[f"prod:{SKU}"] = {"product_id": "1", "sku": SKU, "name": "Arroz", "description": "Grano largo"}
+    redis.hashes[f"price:1:{SEDE}:{SKU}"] = {"list_price": "5", "final_price": "5"}
+    redis.sets[f"cat:1:{SEDE}"] = {SKU}
+    monkeypatch.setattr(catalog_router, "get_cache_redis", lambda: redis)
+    monkeypatch.setattr(search_router, "get_cache_redis", lambda: redis)
+    monkeypatch.setattr(search_router, "meili", FakeMeili())
+    return redis
+
+
+def _cliente():
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+@pytest.mark.asyncio
+async def test_detalle_trae_la_descripcion(con_descripcion):
+    async with _cliente() as cliente:
+        res = await cliente.get(f"/v1/catalog/{SKU}", headers=HEADERS)
+    assert res.json()["descripcion"] == "Grano largo"
+
+
+@pytest.mark.asyncio
+async def test_listado_y_busqueda_no_traen_la_descripcion(con_descripcion):
+    async with _cliente() as cliente:
+        catalogo = await cliente.get("/v1/catalog", headers=HEADERS)
+        busqueda = await cliente.get("/v1/search?q=arroz", headers=HEADERS)
+    assert catalogo.json()["items"][0]["descripcion"] is None
+    assert busqueda.json()["items"][0]["descripcion"] is None
+
+
+@pytest.mark.asyncio
+async def test_detalle_sin_descripcion_es_null(entorno):
+    res = await entorno.get(f"/v1/catalog/{SKU}", headers=HEADERS)
+    assert res.json()["descripcion"] is None
+
+
+class FakeOdoo:
+    async def fetch_product_sync(self, sku, sede, request_id):
+        return {"master": {"product_id": "1", "sku": sku, "name": "Arroz", "description": "Desde Odoo"},
+                "price": {"list_price": "5", "final_price": "5"}, "stock_band": "disponible"}
+
+
+@pytest.mark.asyncio
+async def test_detalle_por_cache_miss_trae_la_descripcion(monkeypatch):
+    monkeypatch.setattr(catalog_router, "get_cache_redis", lambda: FakeRedis())
+    monkeypatch.setattr(catalog_router, "odoo_client", FakeOdoo())
+    async with _cliente() as cliente:
+        res = await cliente.get(f"/v1/catalog/{SKU}", headers=HEADERS)
+    assert res.json()["descripcion"] == "Desde Odoo"

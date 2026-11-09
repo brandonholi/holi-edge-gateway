@@ -6,7 +6,7 @@ longitude near -77, both negative. Those signs are the whole reason the model
 validates bounds — a swapped pair lands in the Pacific and every customer would
 be told we do not deliver.
 """
-from app.core.geo import haversine_km, point_in_polygon, resolve_zone
+from app.core.geo import haversine_km, nearest_store, point_in_polygon, resolve_zone
 
 # A square from (-12.13, -77.05) to (-12.10, -77.02)
 CUADRADO = [
@@ -124,3 +124,30 @@ def test_vertice_malformado_no_rompe_la_resolucion():
     zona = _zona("LIM01", CUADRADO, tienda_lat=-12.115, tienda_lng=-77.03)
     zona["poligono"].append({"lat": -12.11})  # sin lng
     assert resolve_zone(-12.115, -77.035, [zona])["zona"]["sede"] == "LIM01"
+
+
+# --------------------------------------------------------------------------- #
+# Nearest store, covered or not
+# --------------------------------------------------------------------------- #
+
+def test_tienda_mas_cercana_fuera_de_toda_zona():
+    zonas = [
+        _zona("LIM01", CUADRADO, tienda_lat=-12.115, tienda_lng=-77.035),
+        _zona("AQP01", CUADRADO, tienda_lat=-16.40, tienda_lng=-71.53),
+    ]
+    resultado = nearest_store(-16.0, -71.9, zonas)
+    assert resultado["zona"]["sede"] == "AQP01"
+    assert resultado["distancia_km"] > 0
+
+
+def test_tienda_mas_cercana_ignora_tiendas_sin_coordenadas():
+    zonas = [
+        _zona("SINXY", CUADRADO),
+        _zona("LIM01", CUADRADO, tienda_lat=-12.115, tienda_lng=-77.035),
+    ]
+    assert nearest_store(-16.0, -71.9, zonas)["zona"]["sede"] == "LIM01"
+
+
+def test_sin_tiendas_medibles_no_hay_tienda_cercana():
+    assert nearest_store(-16.0, -71.9, [_zona("SINXY", CUADRADO)]) is None
+    assert nearest_store(-16.0, -71.9, []) is None

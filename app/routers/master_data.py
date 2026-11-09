@@ -8,7 +8,9 @@ from ..clients.odoo_client import OdooClient, OdooClientError
 from ..clients.redis_client import get_cache_redis
 from ..core.config import settings
 from ..core.deps import RequestId, SedeOpcional
-from ..core.geo import resolve_zone
+from ..core.errors import ApiError
+from ..core.geo import nearest_store, resolve_zone
+from ..core.sede import leer_sede_por_defecto
 from ..schemas.master_data import (
     CoberturaOut,
     DepartamentosOut,
@@ -18,6 +20,7 @@ from ..schemas.master_data import (
     MensajesInicioOut,
     ProvinciasOut,
     TiendaCobertura,
+    TiendaPorDefectoOut,
     TiposDocumentoOut,
 )
 
@@ -164,9 +167,14 @@ async def resolver_cobertura(
 
     if not match:
         mensaje = data.get("mensaje_sin_cobertura") or {}
+        cercana = nearest_store(lat, lng, data.get("zonas", []))
         return CoberturaOut(
             cobertura=False,
-            tienda=None,
+            tienda=TiendaCobertura(
+                sede=cercana["zona"]["sede"],
+                nombre=cercana["zona"].get("tienda", ""),
+                distancia_km=cercana["distancia_km"],
+            ) if cercana else None,
             mensaje=MensajeCobertura(
                 titulo=mensaje.get("titulo", "Aún no llegamos a tu zona"),
                 mensaje=mensaje.get(
@@ -186,6 +194,25 @@ async def resolver_cobertura(
         ),
         mensaje=None,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Default store
+# --------------------------------------------------------------------------- #
+
+@router.get("/stores/default", response_model=TiendaPorDefectoOut)
+async def sede_por_defecto():
+    """
+    The store the app shows before the customer picks an address.
+
+    Every route that needs a store falls back to this one when the request has
+    no X-Holi-Sede. The app reads it at launch to say whose prices it shows.
+    No default marked in Odoo: 404.
+    """
+    tienda = await leer_sede_por_defecto()
+    if not tienda:
+        raise ApiError("no-encontrado", "No hay una sede por defecto configurada.")
+    return TiendaPorDefectoOut(**tienda)
 
 
 # --------------------------------------------------------------------------- #

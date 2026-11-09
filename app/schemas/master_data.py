@@ -77,6 +77,11 @@ class MensajesInicioOut(Lista[MensajeInicio]):
     sede: Optional[str] = None
 
 
+class TiendaPorDefectoOut(BaseModel):
+    sede: str = Field(description="Código de sede; el Edge la usa cuando una consulta llega sin X-Holi-Sede")
+    nombre: str
+
+
 class TiendaCobertura(BaseModel):
     sede: str = Field(description="Código de sede para la cabecera X-Holi-Sede")
     nombre: str
@@ -97,7 +102,11 @@ class CoberturaOut(BaseModel):
     rather than an error screen.
     """
     cobertura: bool
-    tienda: Optional[TiendaCobertura] = None
+    tienda: Optional[TiendaCobertura] = Field(
+        default=None,
+        description="Con cobertura, la tienda que reparte. Sin cobertura, la más cercana: la app "
+                    "puede mostrar su catálogo, pero no hay reparto a esta dirección. Nula si "
+                    "ninguna tienda tiene coordenadas")
     mensaje: Optional[MensajeCobertura] = Field(
         default=None, description="Presente solo cuando cobertura es false"
     )

@@ -16,8 +16,11 @@ async def test_health_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_catalog_missing_sede_header():
-    """A missing X-Holi-Sede is a malformed request: 422 parametros-invalidos."""
+async def test_catalog_missing_sede_header(monkeypatch):
+    """No X-Holi-Sede and no default store in Odoo: 422 parametros-invalidos."""
+    from app.core import sede as sede_module
+    from tests.test_auth_otp import FakeRedis
+    monkeypatch.setattr(sede_module, "get_cache_redis", lambda: FakeRedis())
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         res = await client.get("/v1/catalog")

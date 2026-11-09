@@ -7,17 +7,31 @@ every route and /docs lists it on every route that needs it.
 """
 from typing import Annotated, Optional
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, Request, Response
 
 from .errors import ApiError
+from .sede import leer_sede_por_defecto
 from .security import SecurityError, verify_access_token
 
 
-def _sede_requerida(x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede")) -> str:
+async def _sede_requerida(
+    response: Response,
+    x_holi_sede: Optional[str] = Header(None, alias="X-Holi-Sede"),
+) -> str:
+    """
+    The store a request is answered for: the header, or else the default store
+    Odoo marks. The response echoes it in X-Holi-Sede so the app always knows
+    whose prices it is showing.
+    """
     sede = (x_holi_sede or "").strip().upper()
     if not sede:
-        raise ApiError("parametros-invalidos", "Falta la cabecera X-Holi-Sede.",
-                       errores=[{"campo": "X-Holi-Sede", "mensaje": "Cabecera obligatoria"}])
+        por_defecto = await leer_sede_por_defecto()
+        if not por_defecto:
+            raise ApiError("parametros-invalidos",
+                           "Falta la cabecera X-Holi-Sede y no hay una sede por defecto.",
+                           errores=[{"campo": "X-Holi-Sede", "mensaje": "Cabecera obligatoria"}])
+        sede = por_defecto["sede"]
+    response.headers["X-Holi-Sede"] = sede
     return sede
 
 

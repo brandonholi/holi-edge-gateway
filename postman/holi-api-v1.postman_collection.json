@@ -79,6 +79,42 @@
           ]
         },
         {
+          "name": "Sede por defecto",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/stores/default",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "stores",
+                "default"
+              ]
+            },
+            "description": "La sede que usa el Edge cuando una consulta llega sin `X-Holi-Sede`, marcada en Odoo (Tiendas → \"Sede por defecto\"). La app la lee al abrirse para mostrar de qué tienda son los precios. 404 `no-encontrado` si no hay ninguna marcada. Deja `sede` en el entorno; `/coverage` la reemplaza cuando el cliente elige su dirección."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Responde 200\", () => pm.response.to.have.status(200));",
+                  "const _v = (() => { try { return pm.response.json().sede; } catch (e) { return undefined; } })(); if (_v) pm.environment.set(\"sede\", String(_v));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Mensajes de inicio",
           "request": {
             "method": "GET",
@@ -144,7 +180,7 @@
                 }
               ]
             },
-            "description": "Dice qué tienda atiende un punto. Si hay cobertura, guarda su `sede` para el resto de la colección."
+            "description": "Dice qué tienda atiende un punto. Si hay cobertura, guarda su `sede` para el resto de la colección. Fuera de cobertura (`cobertura: false`) `tienda` es la tienda más cercana: la app puede mostrar su catálogo, pero no dejar comprar con esa dirección."
           },
           "event": [
             {

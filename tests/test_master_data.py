@@ -309,8 +309,22 @@ async def test_fuera_de_cobertura_responde_200_con_mensaje(entorno):
 
     cuerpo = res.json()
     assert cuerpo["cobertura"] is False
-    assert cuerpo["tienda"] is None
     assert cuerpo["mensaje"]["titulo"] == "Aún no llegamos a tu zona"
+    # The nearest store still comes back, so the app can show its catalog.
+    assert cuerpo["tienda"]["sede"] == "LIM01"
+    assert cuerpo["tienda"]["nombre"] == "Holi Miraflores"
+    assert cuerpo["tienda"]["distancia_km"] > 700  # Arequipa to Miraflores
+
+
+@pytest.mark.asyncio
+async def test_fuera_de_cobertura_sin_coordenadas_de_tienda_no_trae_tienda(entorno):
+    client, _redis, odoo = entorno
+    odoo.zonas[0]["tienda_lat"] = 0.0
+    odoo.zonas[0]["tienda_lng"] = 0.0
+
+    res = await client.get("/v1/coverage", params={"lat": -16.40, "lng": -71.53})
+    assert res.json()["cobertura"] is False
+    assert res.json()["tienda"] is None
 
 
 @pytest.mark.asyncio

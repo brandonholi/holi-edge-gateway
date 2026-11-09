@@ -103,3 +103,30 @@ def resolve_zone(lat: float, lng: float, zones: List[Dict]) -> Optional[Dict]:
 
     _distance, _priority, zone = min(matches, key=lambda m: m[1])
     return {"zona": zone, "distancia_km": None}
+
+
+def nearest_store(lat: float, lng: float, zones: List[Dict]) -> Optional[Dict]:
+    """
+    The store closest to a point, whether or not any zone covers it.
+
+    Used when nobody delivers to the point: the app can still show the nearest
+    store's catalog. Stores come from the zones (each zone carries its store and
+    the store's coordinates); a store with no coordinates cannot be measured and
+    is skipped.
+    """
+    best = None
+    for zone in zones:
+        store_lat = zone.get("tienda_lat") or 0.0
+        store_lng = zone.get("tienda_lng") or 0.0
+        if not (store_lat and store_lng and zone.get("sede")):
+            continue
+        try:
+            distance = haversine_km(lat, lng, float(store_lat), float(store_lng))
+        except (TypeError, ValueError):
+            continue
+        if best is None or distance < best[0]:
+            best = (distance, zone)
+    if best is None:
+        return None
+    distance, zone = best
+    return {"zona": zone, "distancia_km": round(distance, 2)}

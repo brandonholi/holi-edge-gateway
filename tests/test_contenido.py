@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
+from app.core import sede as sede_module
 from app.main import app
 from app.routers import catalog as catalog_router
 from app.routers import content as content_router
@@ -99,6 +100,7 @@ def cliente(monkeypatch):
                         lambda: datetime(2026, 10, 6, 12, tzinfo=timezone.utc))
     monkeypatch.setattr(catalog_router, "get_cache_redis", lambda: redis)
     monkeypatch.setattr(content_router, "get_cache_redis", lambda: redis)
+    monkeypatch.setattr(sede_module, "get_cache_redis", lambda: redis)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 

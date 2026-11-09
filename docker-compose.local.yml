@@ -1,0 +1,24 @@
+# Edge en Docker contra los servicios de esta PC (Odoo local y Redis holi-redis).
+#
+#   docker compose -f docker-compose.local.yml up --build
+#
+# Lee las claves del mismo .env que el Edge sin Docker. Dentro del contenedor
+# "localhost" es el propio contenedor, así que las URLs de Redis y Odoo se
+# reemplazan aquí por host.docker.internal; el resto del .env queda igual.
+# Para apuntar a stage o producción no se toca este archivo: se usa otro
+# env_file con las URLs y secretos de ese entorno (ver ENTORNOS.md en holi-app-ecommerce).
+services:
+  edge:
+    build: .
+    image: holi-edge-gateway:local
+    env_file: .env
+    environment:
+      ENVIRONMENT: development
+      REDIS_CACHE_URL: redis://host.docker.internal:6379/0
+      REDIS_STATE_URL: redis://host.docker.internal:6379/1
+      ODOO_BASE_URL: http://host.docker.internal:8081
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
